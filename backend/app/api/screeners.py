@@ -108,6 +108,8 @@ def api_screener_results(
                 "trailing_1y_return": r.trailing_1y_return,
                 "realized_vol_1y": r.realized_vol_1y,
                 "furthest_option_expiry": r.furthest_option_expiry,
+                "net_income": r.net_income,
+                "free_cash_flow": r.free_cash_flow,
                 "ni_over_mcap": r.ni_over_mcap,
                 "fcf_over_mcap": r.fcf_over_mcap,
                 "nearest_debt_maturity": r.nearest_debt_maturity,

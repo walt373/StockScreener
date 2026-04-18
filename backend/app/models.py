@@ -170,6 +170,8 @@ class ScreenerResult(Base):
     trailing_1y_return: Mapped[float | None] = mapped_column(Float, nullable=True)
     realized_vol_1y: Mapped[float | None] = mapped_column(Float, nullable=True)
     furthest_option_expiry: Mapped[str | None] = mapped_column(String, nullable=True)
+    net_income: Mapped[float | None] = mapped_column(Float, nullable=True)
+    free_cash_flow: Mapped[float | None] = mapped_column(Float, nullable=True)
     ni_over_mcap: Mapped[float | None] = mapped_column(Float, nullable=True)
     fcf_over_mcap: Mapped[float | None] = mapped_column(Float, nullable=True)
     nearest_debt_maturity: Mapped[str | None] = mapped_column(String, nullable=True)

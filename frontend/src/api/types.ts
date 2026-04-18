@@ -49,6 +49,8 @@ export interface ResultRow {
   trailing_1y_return: number | null;
   realized_vol_1y: number | null;
   furthest_option_expiry: string | null;
+  net_income: number | null;
+  free_cash_flow: number | null;
   ni_over_mcap: number | null;
   fcf_over_mcap: number | null;
   nearest_debt_maturity: string | null;

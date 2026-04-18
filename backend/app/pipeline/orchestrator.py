@@ -190,6 +190,8 @@ def _materialize(db: Session, run_id: int, screener: Any, rows: list[stages.Row]
                 trailing_1y_return=p.get("trailing_1y_return"),
                 realized_vol_1y=p.get("realized_vol_1y"),
                 furthest_option_expiry=p.get("furthest_option_expiry"),
+                net_income=p.get("net_income"),
+                free_cash_flow=p.get("free_cash_flow"),
                 ni_over_mcap=p.get("ni_over_mcap"),
                 fcf_over_mcap=p.get("fcf_over_mcap"),
                 nearest_debt_maturity=p.get("nearest_debt_maturity"),

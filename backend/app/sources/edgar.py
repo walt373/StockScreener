@@ -135,6 +135,7 @@ def extract_xbrl_balance(facts: dict | None) -> dict[str, float | None]:
     out: dict[str, float | None] = {
         "cash": None,
         "current_assets": None,
+        "total_assets": None,
         "total_liabilities": None,
         "equity": None,
         "net_income": None,
@@ -164,6 +165,7 @@ def extract_xbrl_balance(facts: dict | None) -> dict[str, float | None]:
         ),
     )
     out["current_assets"] = _pick(us_gaap, ("AssetsCurrent",))
+    out["total_assets"] = _pick(us_gaap, ("Assets",))
     out["total_liabilities"] = _pick(us_gaap, ("Liabilities",))
     out["equity"] = _pick(
         us_gaap,

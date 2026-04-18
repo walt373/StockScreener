@@ -37,8 +37,10 @@ export interface ResultRow {
   avg_volume: number | null;
   cash: number | null;
   current_assets: number | null;
+  total_assets: number | null;
   total_liabilities: number | null;
   equity: number | null;
+  liabilities_over_assets: number | null;
   revenue_growth: number | null;
   short_interest: number | null;
   trailing_1y_return: number | null;

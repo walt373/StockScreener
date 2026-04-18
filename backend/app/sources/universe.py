@@ -99,6 +99,40 @@ def _parse_other_listed(text: str) -> list[UniverseRow]:
     return rows
 
 
+_SECURITY_SUFFIX_KEYWORDS = (
+    "common stock",
+    "common share",
+    "ordinary share",
+    "ordinary stock",
+    "class ",  # catches "Class A", "Class B", etc.
+    "depositary",
+    "depository",
+    "american depository",
+    "american depositary",
+    "adr",
+    "ads",
+    "receipt",
+    "preferred",
+    "pfd",
+)
+
+
+def clean_company_name(name: str) -> str:
+    """Strip security-type suffixes like ' - Common Stock', ' - Class A Ordinary Shares'.
+
+    Uses rsplit to keep only the rightmost ' - ' as the separator, so names
+    containing a dash (e.g. 'Some Company - Holdings Inc.') aren't over-stripped
+    unless the suffix clearly names a security type.
+    """
+    if not name or " - " not in name:
+        return name.strip() if name else name
+    head, _, tail = name.rpartition(" - ")
+    tail_lower = tail.lower().strip()
+    if any(kw in tail_lower for kw in _SECURITY_SUFFIX_KEYWORDS):
+        return head.strip()
+    return name.strip()
+
+
 def _is_common_stock_symbol(sym: str, name: str = "") -> bool:
     if not sym:
         return False
@@ -147,6 +181,7 @@ async def fetch_universe() -> list[UniverseRow]:
         if r.ticker in seen:
             continue
         seen.add(r.ticker)
+        r.name = clean_company_name(r.name)
         filtered.append(r)
     log.info("Universe parsed: %d raw rows → %d filtered", len(rows), len(filtered))
     return filtered

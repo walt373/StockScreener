@@ -38,6 +38,9 @@ _MIGRATIONS: list[tuple[str, str]] = [
     ("edgar_company_cache", "latest_nt_10q_filed DATETIME"),
     ("screener_results", "nt_10k_filed_at VARCHAR"),
     ("screener_results", "nt_10q_filed_at VARCHAR"),
+    ("fundamentals_cache", "total_assets FLOAT"),
+    ("screener_results", "total_assets FLOAT"),
+    ("screener_results", "liabilities_over_assets FLOAT"),
 ]
 
 

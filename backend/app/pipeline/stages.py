@@ -50,6 +50,7 @@ class Row:
     avg_volume: float | None = None
     cash: float | None = None
     current_assets: float | None = None
+    total_assets: float | None = None
     total_liabilities: float | None = None
     equity: float | None = None
     revenue_growth: float | None = None
@@ -652,6 +653,7 @@ async def _apply_xbrl(r: Row, facts: dict | None) -> None:
     balance = edgar.extract_xbrl_balance(facts)
     r.cash = balance["cash"]
     r.current_assets = balance["current_assets"]
+    r.total_assets = balance["total_assets"]
     r.total_liabilities = balance["total_liabilities"]
     r.equity = balance["equity"]
     r.net_income = balance["net_income"]
@@ -761,6 +763,7 @@ async def stage_filings(
                 db.add(fc)
             fc.cash = r.cash
             fc.current_assets = r.current_assets
+            fc.total_assets = r.total_assets
             fc.total_liabilities = r.total_liabilities
             fc.equity = r.equity
             fc.net_income = r.net_income

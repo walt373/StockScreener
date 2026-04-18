@@ -94,3 +94,17 @@ def test_projection_computes_ratios():
     assert p["ch11_mentions"] == 4
     assert p["short_interest"] == 1000.0
     assert p["exchange"] == "NASDAQ"
+
+
+def test_filters_reject_mega_cap():
+    s = BankruptcyScreener()
+    row = _base_row()
+    row["market_cap"] = 3_000_000_000  # $3B > $2B max
+    assert s.hard_filters(row) is False
+
+
+def test_filters_boundary_mega_cap():
+    s = BankruptcyScreener()
+    row = _base_row()
+    row["market_cap"] = 2_000_000_000  # exactly $2B — passes
+    assert s.hard_filters(row) is True

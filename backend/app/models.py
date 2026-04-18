@@ -96,6 +96,8 @@ class EdgarCompanyCache(Base):
     latest_10q_accession: Mapped[str | None] = mapped_column(String, nullable=True)
     latest_10q_primary_doc: Mapped[str | None] = mapped_column(String, nullable=True)
     latest_10q_filed: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    latest_nt_10k_filed: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    latest_nt_10q_filed: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     has_us_filing: Mapped[bool] = mapped_column(Boolean, default=False)
     submissions_fetched_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     companyfacts_fetched_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -167,6 +169,8 @@ class ScreenerResult(Base):
     bond_last_traded: Mapped[str | None] = mapped_column(String, nullable=True)
     going_concern_flag: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     ch11_mentions: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    nt_10k_filed_at: Mapped[str | None] = mapped_column(String, nullable=True)
+    nt_10q_filed_at: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 Index("ix_screener_results_screener_run", ScreenerResult.screener_id, ScreenerResult.run_id)

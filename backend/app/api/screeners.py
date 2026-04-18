@@ -111,6 +111,8 @@ def api_screener_results(
                 "bond_last_traded": r.bond_last_traded,
                 "going_concern_flag": r.going_concern_flag,
                 "ch11_mentions": r.ch11_mentions,
+                "nt_10k_filed_at": r.nt_10k_filed_at,
+                "nt_10q_filed_at": r.nt_10q_filed_at,
             }
             for r in results
         ],

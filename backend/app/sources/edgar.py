@@ -20,6 +20,8 @@ class LatestFilings:
     latest_10q_accession: str | None
     latest_10q_primary_doc: str | None
     latest_10q_filed: date | None
+    latest_nt_10k_filed: date | None
+    latest_nt_10q_filed: date | None
 
 
 def _accession_nodash(acc: str) -> str:
@@ -64,6 +66,8 @@ async def latest_10k_10q(cik: str) -> LatestFilings:
     subs = await fetch_submissions(cik)
     k = _latest_by_form(subs, ("10-K", "10-K/A"))
     q = _latest_by_form(subs, ("10-Q", "10-Q/A"))
+    nk = _latest_by_form(subs, ("NT 10-K", "NT 10-K/A"))
+    nq = _latest_by_form(subs, ("NT 10-Q", "NT 10-Q/A"))
     return LatestFilings(
         cik=cik,
         latest_10k_accession=k[0] if k else None,
@@ -72,6 +76,8 @@ async def latest_10k_10q(cik: str) -> LatestFilings:
         latest_10q_accession=q[0] if q else None,
         latest_10q_primary_doc=q[1] if q else None,
         latest_10q_filed=q[2] if q else None,
+        latest_nt_10k_filed=nk[2] if nk else None,
+        latest_nt_10q_filed=nq[2] if nq else None,
     )
 
 

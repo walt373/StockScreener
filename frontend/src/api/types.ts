@@ -52,6 +52,8 @@ export interface ResultRow {
   bond_last_traded: string | null;
   going_concern_flag: boolean | null;
   ch11_mentions: number | null;
+  nt_10k_filed_at: string | null;
+  nt_10q_filed_at: string | null;
   [key: string]: unknown;
 }
 

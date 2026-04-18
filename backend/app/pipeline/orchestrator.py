@@ -90,13 +90,18 @@ async def _run_stages(
     db.commit()
     await stages.stage_batch_market(db, rows, run.id, force=force, run=run)
 
-    # B.5 PRE-FILTER — apply union of all screeners' cheap-data filters.
-    # Drops ~80% of universe before any EDGAR or per-ticker yfinance work.
+    # B.5. Bulk optionable-symbol tag — CBOE/Nasdaqtrader, one fetch, no per-ticker yfinance.
+    run.stage = "optionable_tag"
+    db.commit()
+    await stages.stage_optionable_tag(db, rows, run.id, force=force, run=run)
+
+    # B.6. PRE-FILTER — apply union of screener pre-filters (price / vol / exchange /
+    # has_options / not-bankrupt). Drops most of universe before EDGAR.
     run.stage = "pre_filter"
     db.commit()
     before = len(rows)
     rows = [r for r in rows if any(s.pre_filter(asdict(r)) for s in screeners)]
-    log.info("Pre-filter: %d → %d (distress candidates only)", before, len(rows))
+    log.info("Pre-filter: %d → %d", before, len(rows))
 
     # C. Filer check (EDGAR — reliable, 10/sec limit)
     run.stage = "filer_check"
@@ -111,10 +116,10 @@ async def _run_stages(
     # E. Compute mcap = price × shares_out (free, in-memory)
     stages.stage_compute_mcap(rows)
 
-    # F. Options gate — per-ticker yfinance, but only on survivors (~200-300 calls)
-    run.stage = "options"
+    # F. Option expiries — per-ticker yfinance, bounded by optionable survivors (~200-300)
+    run.stage = "option_expiries"
     db.commit()
-    rows = await stages.stage_options(db, rows, run.id, force=force, run=run)
+    await stages.stage_option_expiries(db, rows, run.id, force=force, run=run)
 
     # G. Shortint (FINRA) + bond overrides
     run.stage = "shortint_bonds"
@@ -188,6 +193,8 @@ def _materialize(db: Session, run_id: int, screener: Any, rows: list[stages.Row]
                 bond_last_traded=p.get("bond_last_traded"),
                 going_concern_flag=p.get("going_concern_flag"),
                 ch11_mentions=p.get("ch11_mentions"),
+                nt_10k_filed_at=p.get("nt_10k_filed_at"),
+                nt_10q_filed_at=p.get("nt_10q_filed_at"),
             )
         )
     db.commit()

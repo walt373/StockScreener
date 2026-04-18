@@ -31,7 +31,7 @@ from ..models import (
     TickerError,
     utcnow,
 )
-from ..sources import edgar, finra_shortint, universe, yfinance_client
+from ..sources import edgar, finra_shortint, optionable, universe, yfinance_client
 from ..util.filings_text import analyze_filing_html
 from ..util.numbers import safe_float
 
@@ -65,6 +65,8 @@ class Row:
     nearest_debt_maturity: str | None = None
     going_concern_flag: bool | None = None
     ch11_mentions: int | None = None
+    nt_10k_filed_at: str | None = None
+    nt_10q_filed_at: str | None = None
     bond_price: float | None = None
     bond_yield: float | None = None
     bond_last_traded: str | None = None
@@ -356,19 +358,44 @@ async def stage_cheap_filter(
 # ---------------------------------------------------------------------------
 # Stage C — options gate
 # ---------------------------------------------------------------------------
-async def stage_options(
+async def stage_optionable_tag(
     db: Session, rows: list[Row], run_id: int, *, force: bool, run: RefreshRun | None = None
-) -> list[Row]:
-    max_age = settings.incremental_max_age_hours
+) -> None:
+    """Cheap: tag has_options from the bulk CBOE/Nasdaqtrader list — one HTTP fetch,
+    no per-ticker calls. Fallback to per-ticker yfinance only if bulk source failed."""
+    try:
+        bulk = await optionable.fetch_optionable_symbols()
+    except Exception as e:  # noqa: BLE001
+        _log_err(db, run_id, None, "optionable_bulk", e)
+        bulk = None
+
     cached: dict[str, OptionsCache] = {
         o.ticker: o for o in db.execute(select(OptionsCache)).scalars()
     }
+    OPTIONS_CACHE_TTL_HOURS = 24 * 30  # options listings change slowly
+
+    if bulk is not None:
+        for r in rows:
+            r.has_options = r.ticker.upper() in bulk
+            c = cached.get(r.ticker)
+            if c is None:
+                c = OptionsCache(ticker=r.ticker)
+                db.add(c)
+                cached[r.ticker] = c
+            c.has_options = r.has_options
+            c.fetched_at = utcnow()
+        db.commit()
+        log.info("Optionable tag (bulk): %d / %d rows marked optionable", sum(r.has_options for r in rows), len(rows))
+        return
+
+    # Fallback: per-ticker yfinance. Only runs if bulk source is down.
+    log.warning("Optionable bulk unavailable — falling back to per-ticker yfinance")
     prog = ProgressTracker(db, run, total=len(rows))
 
     async def work(r: Row) -> None:
         try:
             c = cached.get(r.ticker)
-            if not force and c and _fresh(c.fetched_at, max_age):
+            if not force and c and _fresh(c.fetched_at, OPTIONS_CACHE_TTL_HOURS):
                 r.has_options = c.has_options
                 r.furthest_expiry = c.furthest_expiry
                 return
@@ -390,9 +417,44 @@ async def stage_options(
 
     await asyncio.gather(*(work(r) for r in rows))
     db.commit()
-    keep = [r for r in rows if r.has_options]
-    log.info("Options gate: %d → %d", len(rows), len(keep))
-    return keep
+
+
+async def stage_option_expiries(
+    db: Session, rows: list[Row], run_id: int, *, force: bool, run: RefreshRun | None = None
+) -> None:
+    """Per-ticker yfinance: only fetches the furthest expiry on rows already tagged
+    has_options=True by the bulk stage. Small, bounded cost (~200-300 calls)."""
+    max_age = 24 * 30  # monthly refresh is plenty
+    cached: dict[str, OptionsCache] = {
+        o.ticker: o for o in db.execute(select(OptionsCache)).scalars()
+    }
+    todo = [r for r in rows if r.has_options]
+    prog = ProgressTracker(db, run, total=len(todo))
+
+    async def work(r: Row) -> None:
+        try:
+            c = cached.get(r.ticker)
+            if not force and c and c.furthest_expiry and _fresh(c.fetched_at, max_age):
+                r.furthest_expiry = c.furthest_expiry
+                return
+            try:
+                expiries = await yfinance_client.option_expiries(r.ticker)
+            except Exception as e:  # noqa: BLE001
+                _log_err(db, run_id, r.ticker, "option_expiries", e)
+                expiries = []
+            if expiries:
+                r.furthest_expiry = expiries[-1]
+                if c is None:
+                    c = OptionsCache(ticker=r.ticker, has_options=True)
+                    db.add(c)
+                c.furthest_expiry = r.furthest_expiry
+                c.fetched_at = utcnow()
+        finally:
+            prog.tick()
+
+    await asyncio.gather(*(work(r) for r in todo))
+    db.commit()
+    log.info("Option expiries: resolved for %d rows", len(todo))
 
 
 # ---------------------------------------------------------------------------
@@ -414,6 +476,8 @@ async def stage_filer_check(
             c = cached.get(r.cik)
             if not force and c and _fresh(c.submissions_fetched_at, hours=24 * max_age_days):
                 r.has_us_filing = bool(c.has_us_filing)
+                r.nt_10k_filed_at = c.latest_nt_10k_filed.date().isoformat() if c.latest_nt_10k_filed else None
+                r.nt_10q_filed_at = c.latest_nt_10q_filed.date().isoformat() if c.latest_nt_10q_filed else None
                 return
             try:
                 lf = await edgar.latest_10k_10q(r.cik)
@@ -422,6 +486,8 @@ async def stage_filer_check(
                 return
             has_us = bool(lf.latest_10k_accession or lf.latest_10q_accession)
             r.has_us_filing = has_us
+            r.nt_10k_filed_at = lf.latest_nt_10k_filed.isoformat() if lf.latest_nt_10k_filed else None
+            r.nt_10q_filed_at = lf.latest_nt_10q_filed.isoformat() if lf.latest_nt_10q_filed else None
             if c is None:
                 c = EdgarCompanyCache(cik=r.cik, ticker=r.ticker)
                 db.add(c)
@@ -435,6 +501,16 @@ async def stage_filer_check(
             c.latest_10q_primary_doc = lf.latest_10q_primary_doc
             c.latest_10q_filed = (
                 datetime.combine(lf.latest_10q_filed, datetime.min.time()) if lf.latest_10q_filed else None
+            )
+            c.latest_nt_10k_filed = (
+                datetime.combine(lf.latest_nt_10k_filed, datetime.min.time())
+                if lf.latest_nt_10k_filed
+                else None
+            )
+            c.latest_nt_10q_filed = (
+                datetime.combine(lf.latest_nt_10q_filed, datetime.min.time())
+                if lf.latest_nt_10q_filed
+                else None
             )
             c.has_us_filing = has_us
             c.submissions_fetched_at = utcnow()

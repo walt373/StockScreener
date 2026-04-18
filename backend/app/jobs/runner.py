@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -54,18 +53,18 @@ class RefreshRunner:
             self._current_run_id = None
 
 
-def reconcile_orphaned(stale_after_hours: int = 2) -> int:
-    """Mark any 'running' refresh rows older than N hours as crashed errors.
-    Called at app startup.
+def reconcile_orphaned() -> int:
+    """Mark ALL 'running' refresh rows as crashed at process start.
+    Nothing from a prior process can still be running, since the async
+    task died with the process.
     """
-    cutoff = utcnow() - timedelta(hours=stale_after_hours)
     db = SessionLocal()
     count = 0
     try:
-        stmt = select(RefreshRun).where(RefreshRun.status == "running", RefreshRun.started_at < cutoff)
+        stmt = select(RefreshRun).where(RefreshRun.status == "running")
         for run in db.execute(stmt).scalars():
             run.status = "error"
-            run.error_summary = "process crashed (orphan reconciled at startup)"
+            run.error_summary = "process restarted (orphan reconciled at startup)"
             run.finished_at = utcnow()
             count += 1
         db.commit()

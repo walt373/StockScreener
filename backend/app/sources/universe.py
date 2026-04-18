@@ -99,38 +99,53 @@ def _parse_other_listed(text: str) -> list[UniverseRow]:
     return rows
 
 
-_SECURITY_SUFFIX_KEYWORDS = (
-    "common stock",
-    "common share",
-    "ordinary share",
-    "ordinary stock",
-    "class ",  # catches "Class A", "Class B", etc.
-    "depositary",
-    "depository",
-    "american depository",
-    "american depositary",
-    "adr",
-    "ads",
-    "receipt",
-    "preferred",
-    "pfd",
+import re
+
+# Trailing security-type phrases to strip, most specific first. Applied iteratively.
+# Works whether a separator (" - ", ", ") is present or not:
+#   "Apple Inc. - Common Stock"            → "Apple Inc."
+#   "Evolent Health, Inc Class A Common Stock" → "Evolent Health, Inc"
+#   "Foo Corp Class B"                     → "Foo Corp"
+_SUFFIX_PATTERNS = (
+    # "Class X Common/Ordinary/Preferred Stock/Shares" (and anything after)
+    re.compile(
+        r"\s*[,\-]?\s*\bClass\s+[A-Z][a-z]?\s+(?:Common|Ordinary|Preferred)\s+(?:Stock|Shares?)\b.*$",
+        re.IGNORECASE,
+    ),
+    # "American Depositary Shares/Receipts"
+    re.compile(
+        r"\s*[,\-]?\s*\b(?:American\s+)?Depositary\s+(?:Shares?|Receipts?)\b.*$",
+        re.IGNORECASE,
+    ),
+    # "Common/Ordinary/Preferred Stock/Shares" (no class)
+    re.compile(
+        r"\s*[,\-]?\s*\b(?:Common|Ordinary|Preferred)\s+(?:Stock|Shares?)\b.*$",
+        re.IGNORECASE,
+    ),
+    # Trailing "Class X" without an explicit stock/shares suffix
+    re.compile(r"\s*[,\-]?\s+\bClass\s+[A-Z][a-z]?\b.*$", re.IGNORECASE),
+    # ADR / ADS
+    re.compile(r"\s*[,\-]?\s+\bAD[RS]\b.*$"),
 )
 
 
 def clean_company_name(name: str) -> str:
-    """Strip security-type suffixes like ' - Common Stock', ' - Class A Ordinary Shares'.
-
-    Uses rsplit to keep only the rightmost ' - ' as the separator, so names
-    containing a dash (e.g. 'Some Company - Holdings Inc.') aren't over-stripped
-    unless the suffix clearly names a security type.
-    """
-    if not name or " - " not in name:
-        return name.strip() if name else name
-    head, _, tail = name.rpartition(" - ")
-    tail_lower = tail.lower().strip()
-    if any(kw in tail_lower for kw in _SECURITY_SUFFIX_KEYWORDS):
-        return head.strip()
-    return name.strip()
+    """Strip trailing security-type phrases (Common Stock, Class A, Depositary Shares…)
+    from a company name, regardless of whether a ' - ' or ',' separator is present."""
+    if not name:
+        return name
+    result = name
+    for _ in range(5):
+        changed = False
+        for pat in _SUFFIX_PATTERNS:
+            new = pat.sub("", result)
+            if new != result:
+                result = new
+                changed = True
+        if not changed:
+            break
+    result = result.strip(" \t-,")
+    return result or name
 
 
 def _is_common_stock_symbol(sym: str, name: str = "") -> bool:

@@ -36,6 +36,21 @@ def test_only_strips_rightmost_security_suffix():
     assert clean_company_name("A - B Holdings - Common Stock") == "A - B Holdings"
 
 
+def test_strips_class_without_separator():
+    """Nasdaq names sometimes omit the ' - ' separator entirely."""
+    assert (
+        clean_company_name("Evolent Health, Inc Class A Common Stock") == "Evolent Health, Inc"
+    )
+
+
+def test_strips_trailing_bare_class():
+    assert clean_company_name("Foo Corp Class B") == "Foo Corp"
+
+
+def test_strips_adr_suffix():
+    assert clean_company_name("Some Foreign Co ADR") == "Some Foreign Co"
+
+
 def test_empty_and_none():
     assert clean_company_name("") == ""
     assert clean_company_name(None) is None

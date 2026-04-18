@@ -190,23 +190,61 @@ def extract_xbrl_balance(facts: dict | None) -> dict[str, float | None]:
     shares = _pick(dei, ("EntityCommonStockSharesOutstanding",))
     out["shares_out"] = shares
 
-    # Revenue growth: compare latest two annual revenues
+    # Revenue growth: compare the two most recent DISTINCT fiscal year-ends.
+    # XBRL reports the same FY value in multiple filings (original 10-K, then
+    # again as prior-year comparative in the next 10-K, sometimes restated).
+    # `fp="FY"` means "tagged in the 10-K" — it catches BOTH full-year values
+    # AND Q4-only values. We require start→end span ≈ 365 days to get annuals.
+    def _is_annual_duration(r: dict) -> bool:
+        try:
+            s = datetime.strptime(r.get("start", ""), "%Y-%m-%d").date()
+            e = datetime.strptime(r.get("end", ""), "%Y-%m-%d").date()
+            days = (e - s).days
+            return 330 <= days <= 400
+        except (ValueError, TypeError):
+            return False
+
+    # Pick whichever revenue concept has the MOST RECENT annual data. Many filers
+    # migrated from us-gaap:Revenues to RevenueFromContractWithCustomerExcluding-
+    # AssessedTax after ASC 606 (2018) — the old concept lingers with stale pre-2018
+    # values that we must not compare to.
+    best_annuals: list[dict] = []
+    best_latest_end = ""
     for key in ("Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax"):
         fact = us_gaap.get(key)
         if not fact:
             continue
         usd = fact.get("units", {}).get("USD") or []
-        annuals = [r for r in usd if r.get("fp") == "FY" and r.get("val") is not None]
-        annuals.sort(key=lambda r: r.get("end", ""), reverse=True)
-        if len(annuals) >= 2 and annuals[1]["val"]:
-            try:
-                cur = float(annuals[0]["val"])
-                prev = float(annuals[1]["val"])
-                if prev != 0:
-                    out["revenue_growth"] = (cur - prev) / abs(prev)
-                    break
-            except (TypeError, ValueError):
+        annuals = [
+            r
+            for r in usd
+            if r.get("fp") == "FY" and r.get("val") is not None and _is_annual_duration(r)
+        ]
+        if not annuals:
+            continue
+        latest_end = max(r.get("end", "") for r in annuals)
+        if latest_end > best_latest_end:
+            best_latest_end = latest_end
+            best_annuals = annuals
+
+    if best_annuals:
+        by_end: dict[str, dict] = {}
+        for r in best_annuals:
+            end = r.get("end")
+            if not end:
                 continue
+            prev = by_end.get(end)
+            if prev is None or (r.get("accn", "") > prev.get("accn", "")):
+                by_end[end] = r
+        unique_ends = sorted(by_end.keys(), reverse=True)
+        if len(unique_ends) >= 2:
+            try:
+                cur = float(by_end[unique_ends[0]]["val"])
+                prev_val = float(by_end[unique_ends[1]]["val"])
+                if prev_val != 0:
+                    out["revenue_growth"] = (cur - prev_val) / abs(prev_val)
+            except (TypeError, ValueError):
+                pass
     return out
 
 

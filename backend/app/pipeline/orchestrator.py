@@ -172,6 +172,7 @@ def _materialize(db: Session, run_id: int, screener: Any, rows: list[stages.Row]
                 ticker=p["ticker"],
                 rank=i,
                 name=p.get("name"),
+                sector=p.get("sector"),
                 exchange=p.get("exchange"),
                 price=p.get("price"),
                 market_cap=p.get("market_cap"),

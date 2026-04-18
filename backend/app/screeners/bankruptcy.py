@@ -35,6 +35,7 @@ META = ScreenerMeta(
     columns=[
         ColumnSpec("ticker", "Ticker", "string", nullable=False),
         ColumnSpec("name", "Name", "string"),
+        ColumnSpec("sector", "Sector", "string", tooltip="SIC description from SEC EDGAR."),
         ColumnSpec("exchange", "Exchange", "string"),
         ColumnSpec("price", "Price", "money"),
         ColumnSpec("market_cap", "Market cap", "money"),
@@ -124,6 +125,7 @@ class BankruptcyScreener:
         return {
             "ticker": row["ticker"],
             "name": row.get("name"),
+            "sector": row.get("sector"),
             "exchange": ex_label,
             "price": row.get("price"),
             "market_cap": mcap,

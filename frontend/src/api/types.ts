@@ -31,6 +31,7 @@ export interface RunInfo {
 export interface ResultRow {
   ticker: string;
   name: string | null;
+  sector: string | null;
   exchange: string | null;
   price: number | null;
   market_cap: number | null;

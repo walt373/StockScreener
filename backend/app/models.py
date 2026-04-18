@@ -91,6 +91,8 @@ class EdgarCompanyCache(Base):
     __tablename__ = "edgar_company_cache"
     cik: Mapped[str] = mapped_column(String, primary_key=True)
     ticker: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    sic: Mapped[str | None] = mapped_column(String, nullable=True)
+    sic_description: Mapped[str | None] = mapped_column(String, nullable=True)
     latest_10k_accession: Mapped[str | None] = mapped_column(String, nullable=True)
     latest_10k_primary_doc: Mapped[str | None] = mapped_column(String, nullable=True)
     latest_10k_filed: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -149,6 +151,7 @@ class ScreenerResult(Base):
     ticker: Mapped[str] = mapped_column(String, primary_key=True)
     rank: Mapped[int] = mapped_column(Integer, default=0)
     name: Mapped[str | None] = mapped_column(String, nullable=True)
+    sector: Mapped[str | None] = mapped_column(String, nullable=True)
     exchange: Mapped[str | None] = mapped_column(String, nullable=True)
     price: Mapped[float | None] = mapped_column(Float, nullable=True)
     market_cap: Mapped[float | None] = mapped_column(Float, nullable=True)

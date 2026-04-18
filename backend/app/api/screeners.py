@@ -90,6 +90,7 @@ def api_screener_results(
             {
                 "ticker": r.ticker,
                 "name": r.name,
+                "sector": r.sector,
                 "exchange": r.exchange,
                 "price": r.price,
                 "market_cap": r.market_cap,

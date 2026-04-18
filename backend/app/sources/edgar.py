@@ -14,6 +14,8 @@ log = logging.getLogger(__name__)
 @dataclass
 class LatestFilings:
     cik: str
+    sic: str | None
+    sic_description: str | None
     latest_10k_accession: str | None
     latest_10k_primary_doc: str | None
     latest_10k_filed: date | None
@@ -70,6 +72,8 @@ async def latest_10k_10q(cik: str) -> LatestFilings:
     nq = _latest_by_form(subs, ("NT 10-Q", "NT 10-Q/A"))
     return LatestFilings(
         cik=cik,
+        sic=subs.get("sic") or None,
+        sic_description=subs.get("sicDescription") or None,
         latest_10k_accession=k[0] if k else None,
         latest_10k_primary_doc=k[1] if k else None,
         latest_10k_filed=k[2] if k else None,

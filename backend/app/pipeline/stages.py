@@ -42,6 +42,7 @@ log = logging.getLogger(__name__)
 class Row:
     ticker: str
     name: str | None = None
+    sector: str | None = None
     exchange: str | None = None
     financial_status: str | None = None
     cik: str | None = None
@@ -477,6 +478,7 @@ async def stage_filer_check(
             c = cached.get(r.cik)
             if not force and c and _fresh(c.submissions_fetched_at, hours=24 * max_age_days):
                 r.has_us_filing = bool(c.has_us_filing)
+                r.sector = c.sic_description
                 r.nt_10k_filed_at = c.latest_nt_10k_filed.date().isoformat() if c.latest_nt_10k_filed else None
                 r.nt_10q_filed_at = c.latest_nt_10q_filed.date().isoformat() if c.latest_nt_10q_filed else None
                 return
@@ -487,12 +489,15 @@ async def stage_filer_check(
                 return
             has_us = bool(lf.latest_10k_accession or lf.latest_10q_accession)
             r.has_us_filing = has_us
+            r.sector = lf.sic_description
             r.nt_10k_filed_at = lf.latest_nt_10k_filed.isoformat() if lf.latest_nt_10k_filed else None
             r.nt_10q_filed_at = lf.latest_nt_10q_filed.isoformat() if lf.latest_nt_10q_filed else None
             if c is None:
                 c = EdgarCompanyCache(cik=r.cik, ticker=r.ticker)
                 db.add(c)
             c.ticker = r.ticker
+            c.sic = lf.sic
+            c.sic_description = lf.sic_description
             c.latest_10k_accession = lf.latest_10k_accession
             c.latest_10k_primary_doc = lf.latest_10k_primary_doc
             c.latest_10k_filed = (

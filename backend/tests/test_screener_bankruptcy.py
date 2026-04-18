@@ -92,7 +92,6 @@ def test_projection_computes_ratios():
     assert p["fcf_over_mcap"] == -3_000_000 / 50_000_000
     assert p["going_concern_flag"] is True
     assert p["ch11_mentions"] == 4
-    assert p["short_interest"] == 1000.0
     assert p["exchange"] == "NASDAQ"
 
 

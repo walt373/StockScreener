@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     edgar_cache_dir: str = "../data/edgar"
     nightly_refresh_hour: int = 2
     nightly_refresh_minute: int = 0
-    yf_concurrency: int = 4
+    yf_concurrency: int = 2
     edgar_rate_per_sec: int = 9
     incremental_max_age_hours: int = 20
 

@@ -171,41 +171,91 @@ async def stage_universe(db: Session) -> list[Row]:
 async def stage_cheap_filter(
     db: Session, rows: list[Row], run_id: int, *, force: bool, run: RefreshRun | None = None
 ) -> list[Row]:
+    """Two-pass: batch price+volume via yf.download, then per-ticker fast_info for mcap only
+    on rows that already passed price/volume. Drastically fewer API calls than per-ticker."""
     max_age = settings.incremental_max_age_hours
     cached: dict[str, FundamentalsCache] = {
         f.ticker: f for f in db.execute(select(FundamentalsCache)).scalars()
     }
-    prog = ProgressTracker(db, run, total=len(rows))
 
-    async def work(r: Row) -> None:
+    # Split into cache-hit (reuse) and need-fetch
+    need_fetch: list[Row] = []
+    for r in rows:
+        c = cached.get(r.ticker)
+        if not force and c and _fresh(c.fetched_at, max_age) and c.price is not None:
+            r.price = c.price
+            r.market_cap = c.market_cap
+            r.avg_volume = c.avg_volume
+        else:
+            need_fetch.append(r)
+
+    # Pass 1: batch price + volume via yf.download (cheap: ~50 tickers per request)
+    prog = ProgressTracker(db, run, total=len(need_fetch) * 2)  # 2 passes
+
+    CHUNK = 50
+    for i in range(0, len(need_fetch), CHUNK):
+        batch = need_fetch[i : i + CHUNK]
+        tickers = [r.ticker for r in batch]
         try:
+            res = await yfinance_client.price_volume_batch(tickers)
+        except Exception as e:  # noqa: BLE001
+            for r in batch:
+                _log_err(db, run_id, r.ticker, "cheap_filter_batch", e)
+            for _ in batch:
+                prog.tick()
+            continue
+        for r in batch:
+            price, vol = res.get(r.ticker, (None, None))
+            r.price = price
+            r.avg_volume = vol
             c = cached.get(r.ticker)
-            if not force and c and _fresh(c.fetched_at, max_age) and c.price is not None:
-                r.price = c.price
-                r.market_cap = c.market_cap
-                r.avg_volume = c.avg_volume
-                return
-            try:
-                fi = await yfinance_client.fast_info(r.ticker)
-            except Exception as e:  # noqa: BLE001
-                _log_err(db, run_id, r.ticker, "cheap_filter", e)
-                return
-            r.price = fi.price
-            r.market_cap = fi.market_cap
-            r.avg_volume = fi.avg_volume
             if c is None:
                 c = FundamentalsCache(ticker=r.ticker)
                 db.add(c)
-            c.price = fi.price
+                cached[r.ticker] = c
+            c.price = price
+            c.avg_volume = vol
+            c.fetched_at = utcnow()
+            prog.tick()
+        db.commit()
+
+    # Pass 2: fast_info ONLY for rows that passed price+volume filter, to get market_cap
+    need_mcap = [
+        r for r in need_fetch
+        if r.price is not None and r.price >= 0.20
+        and r.avg_volume is not None and r.avg_volume >= 100_000
+        and r.exchange in ("NYSE", "NASDAQ", "NYSE_AMERICAN")
+        and r.financial_status != "Q"
+    ]
+    # Adjust total now that we know pass-2 count
+    prog.total = prog.done + len(need_mcap)
+
+    async def mcap_work(r: Row) -> None:
+        try:
+            try:
+                fi = await yfinance_client.fast_info(r.ticker)
+            except Exception as e:  # noqa: BLE001
+                _log_err(db, run_id, r.ticker, "cheap_filter_mcap", e)
+                return
+            r.market_cap = fi.market_cap
+            # fast_info price is usually slightly fresher than yf.download's daily close
+            if fi.price is not None:
+                r.price = fi.price
+            c = cached.get(r.ticker)
+            if c is None:
+                c = FundamentalsCache(ticker=r.ticker)
+                db.add(c)
+                cached[r.ticker] = c
             c.market_cap = fi.market_cap
-            c.avg_volume = fi.avg_volume
+            if fi.price is not None:
+                c.price = fi.price
             c.fetched_at = utcnow()
         finally:
             prog.tick()
 
-    await asyncio.gather(*(work(r) for r in rows), return_exceptions=False)
+    await asyncio.gather(*(mcap_work(r) for r in need_mcap))
     db.commit()
-    # Pre-apply minimal gates to prune before options fetch
+
     keep = [
         r
         for r in rows

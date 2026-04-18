@@ -19,6 +19,29 @@ log = logging.getLogger(__name__)
 _sem = asyncio.Semaphore(settings.yf_concurrency)
 
 
+def _is_rate_limited(e: BaseException) -> bool:
+    name = type(e).__name__
+    msg = str(e).lower()
+    return (
+        name == "YFRateLimitError"
+        or "too many requests" in msg
+        or "rate limit" in msg
+        or "429" in msg
+    )
+
+
+async def _backoff_if_ratelimited(e: BaseException, attempt: int) -> bool:
+    """Returns True if we should retry after sleeping."""
+    if not _is_rate_limited(e):
+        return False
+    if attempt >= 3:
+        return False
+    delay = 30.0 * (2**attempt) + random.uniform(0, 5)  # 30, 60, 120s
+    log.warning("yfinance rate-limited — sleeping %.0fs (attempt %d)", delay, attempt + 1)
+    await asyncio.sleep(delay)
+    return True
+
+
 @dataclass
 class FastInfo:
     price: float | None
@@ -59,7 +82,7 @@ def _fi_get(fi: object, *keys: str):
     return None
 
 
-def _fast_info_sync(ticker: str) -> tuple[float | None, float | None, float | None]:
+def _fast_info_sync(ticker: str) -> tuple[float | None, float | None, float | None, BaseException | None]:
     try:
         t = yf.Ticker(ticker)
         fi = t.fast_info
@@ -74,33 +97,42 @@ def _fast_info_sync(ticker: str) -> tuple[float | None, float | None, float | No
                 "ten_day_average_volume",
             )
         )
-        return price, mcap, avg
-    except Exception as e:  # noqa: BLE001
+        return price, mcap, avg, None
+    except BaseException as e:  # noqa: BLE001
         log.debug("fast_info failed for %s: %s", ticker, e)
-        return None, None, None
+        return None, None, None, e
 
 
 async def fast_info(ticker: str) -> FastInfo:
-    async with _sem:
-        await asyncio.sleep(random.uniform(0.0, 0.25))
-        price, mcap, avg = await _to_thread(_fast_info_sync, ticker)
+    for attempt in range(4):
+        async with _sem:
+            await asyncio.sleep(random.uniform(0.3, 0.9))
+            price, mcap, avg, err = await _to_thread(_fast_info_sync, ticker)
+        if err is not None and await _backoff_if_ratelimited(err, attempt):
+            continue
         return FastInfo(price=price, market_cap=mcap, avg_volume=avg)
+    return FastInfo(None, None, None)
 
 
-def _options_sync(ticker: str) -> list[str]:
+def _options_sync(ticker: str) -> tuple[list[str], BaseException | None]:
     try:
         t = yf.Ticker(ticker)
         opts = t.options
-        return list(opts) if opts else []
-    except Exception as e:  # noqa: BLE001
+        return (list(opts) if opts else []), None
+    except BaseException as e:  # noqa: BLE001
         log.debug("options failed for %s: %s", ticker, e)
-        return []
+        return [], e
 
 
 async def option_expiries(ticker: str) -> list[str]:
-    async with _sem:
-        await asyncio.sleep(random.uniform(0.0, 0.25))
-        return await _to_thread(_options_sync, ticker)
+    for attempt in range(4):
+        async with _sem:
+            await asyncio.sleep(random.uniform(0.3, 0.9))
+            opts, err = await _to_thread(_options_sync, ticker)
+        if err is not None and await _backoff_if_ratelimited(err, attempt):
+            continue
+        return opts
+    return []
 
 
 def _pick_row(df: pd.DataFrame | None, candidates: tuple[str, ...]) -> float | None:
@@ -207,6 +239,54 @@ def _compute_history_metrics(closes: pd.Series) -> tuple[float | None, float | N
     std = float(log_rets.std())
     vol = std * math.sqrt(252) if std and math.isfinite(std) else None
     return ret, vol
+
+
+async def price_volume_batch(tickers: list[str]) -> dict[str, tuple[float | None, float | None]]:
+    """Batch fetch recent price + avg volume via yf.download (much cheaper than per-ticker)."""
+    if not tickers:
+        return {}
+    async with _sem:
+        await asyncio.sleep(random.uniform(0.3, 0.9))
+        try:
+            df = await _to_thread(
+                yf.download,
+                tickers=" ".join(tickers),
+                period="1mo",
+                interval="1d",
+                auto_adjust=True,
+                progress=False,
+                threads=True,
+                group_by="ticker",
+            )
+        except Exception as e:  # noqa: BLE001
+            log.warning("price_volume batch failed (%d tickers): %s", len(tickers), e)
+            return {t: (None, None) for t in tickers}
+
+    out: dict[str, tuple[float | None, float | None]] = {}
+    if df is None or df.empty:
+        return {t: (None, None) for t in tickers}
+    if len(tickers) == 1:
+        closes = df["Close"] if "Close" in df.columns else pd.Series(dtype=float)
+        vols = df["Volume"] if "Volume" in df.columns else pd.Series(dtype=float)
+        last = safe_float(closes.dropna().iloc[-1]) if not closes.dropna().empty else None
+        avg = safe_float(vols.dropna().mean()) if not vols.dropna().empty else None
+        out[tickers[0]] = (last, avg)
+        return out
+    for t in tickers:
+        try:
+            if (t, "Close") in df.columns:
+                closes = df[(t, "Close")].dropna()
+                vols = df[(t, "Volume")].dropna() if (t, "Volume") in df.columns else pd.Series(dtype=float)
+            else:
+                out[t] = (None, None)
+                continue
+            last = safe_float(closes.iloc[-1]) if not closes.empty else None
+            avg = safe_float(vols.mean()) if not vols.empty else None
+            out[t] = (last, avg)
+        except Exception as e:  # noqa: BLE001
+            log.debug("price_volume parse fail %s: %s", t, e)
+            out[t] = (None, None)
+    return out
 
 
 async def history_batch(

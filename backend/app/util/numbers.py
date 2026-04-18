@@ -1,7 +1,16 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from math import isfinite, isnan
 from typing import Any
+
+
+def iso_utc(d: datetime | None) -> str | None:
+    if d is None:
+        return None
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=timezone.utc)
+    return d.isoformat()
 
 
 def safe_float(x: Any) -> float | None:

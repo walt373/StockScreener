@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from ..db import get_session
 from ..jobs.runner import runner
 from ..models import RefreshRun
+from ..util.numbers import iso_utc
 
 router = APIRouter()
 
@@ -49,8 +50,8 @@ def api_refresh_status(
         "status": run.status,
         "stage": run.stage,
         "progress": {"done": run.progress_done, "total": run.progress_total},
-        "started_at": run.started_at.isoformat() if run.started_at else None,
-        "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+        "started_at": iso_utc(run.started_at),
+        "finished_at": iso_utc(run.finished_at),
         "tickers_in": run.tickers_in,
         "tickers_out": run.tickers_out,
         "error": run.error_summary,

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from ..db import get_session
 from ..models import RefreshRun, ScreenerResult
 from ..screeners import get_screener, list_screeners
+from ..util.numbers import iso_utc
 
 router = APIRouter()
 
@@ -80,8 +81,8 @@ def api_screener_results(
         },
         "run": {
             "id": run.id,
-            "started_at": run.started_at.isoformat() if run.started_at else None,
-            "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+            "started_at": iso_utc(run.started_at),
+            "finished_at": iso_utc(run.finished_at),
             "tickers_in": run.tickers_in,
             "tickers_out": run.tickers_out,
         },

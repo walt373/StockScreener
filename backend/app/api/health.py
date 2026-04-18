@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_session
 from ..models import RefreshRun
+from ..util.numbers import iso_utc
 
 router = APIRouter()
 
@@ -18,5 +19,5 @@ def health(db: Session = Depends(get_session)) -> dict:
     return {
         "ok": True,
         "db": "ok",
-        "last_successful_run_at": last_ok.finished_at.isoformat() if last_ok and last_ok.finished_at else None,
+        "last_successful_run_at": iso_utc(last_ok.finished_at) if last_ok else None,
     }

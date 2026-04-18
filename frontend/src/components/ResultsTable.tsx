@@ -65,7 +65,7 @@ function renderCell(col: ColumnSpec, value: unknown): JSX.Element {
 // -------- Filters --------
 
 type NumFilter = { min?: number; max?: number };
-type DateFilter = { sinceYear?: number; untilYear?: number };
+type DateFilter = { sinceYear?: number };
 type StringFilter = { contains?: string };
 type FlagFilter = { value?: "yes" | "no" };
 type Filter = NumFilter | DateFilter | StringFilter | FlagFilter;
@@ -92,13 +92,11 @@ function matchesFilter(col: ColumnSpec, value: unknown, filter: Filter | undefin
   }
   if (col.type === "date") {
     const f = filter as DateFilter;
-    if (f.sinceYear === undefined && f.untilYear === undefined) return true;
+    if (f.sinceYear === undefined) return true;
     if (!value) return false;
     const y = parseInt(String(value).slice(0, 4), 10);
     if (Number.isNaN(y)) return false;
-    if (f.sinceYear !== undefined && y < f.sinceYear) return false;
-    if (f.untilYear !== undefined && y > f.untilYear) return false;
-    return true;
+    return y >= f.sinceYear;
   }
   if (col.type === "flag") {
     const f = filter as FlagFilter;
@@ -116,9 +114,10 @@ interface FilterInputProps {
   col: ColumnSpec;
   value: Filter | undefined;
   onChange: (v: Filter | undefined) => void;
+  availableYears?: number[];
 }
 
-function FilterInput({ col, value, onChange }: FilterInputProps) {
+function FilterInput({ col, value, onChange, availableYears = [] }: FilterInputProps) {
   if (isNumericCol(col.type)) {
     const f = (value ?? {}) as NumFilter;
     const suffix = col.type === "pct" ? "%" : "";
@@ -148,26 +147,20 @@ function FilterInput({ col, value, onChange }: FilterInputProps) {
   if (col.type === "date") {
     const f = (value ?? {}) as DateFilter;
     return (
-      <div className="filter-numeric">
-        <input
-          type="number"
-          placeholder="from yr"
-          value={f.sinceYear ?? ""}
-          onChange={(e) => {
-            const raw = e.target.value;
-            onChange({ ...f, sinceYear: raw === "" ? undefined : Number(raw) });
-          }}
-        />
-        <input
-          type="number"
-          placeholder="to yr"
-          value={f.untilYear ?? ""}
-          onChange={(e) => {
-            const raw = e.target.value;
-            onChange({ ...f, untilYear: raw === "" ? undefined : Number(raw) });
-          }}
-        />
-      </div>
+      <select
+        value={f.sinceYear ?? ""}
+        onChange={(e) => {
+          const raw = e.target.value;
+          onChange(raw === "" ? undefined : { sinceYear: Number(raw) });
+        }}
+      >
+        <option value="">any year</option>
+        {availableYears.map((y) => (
+          <option key={y} value={y}>
+            {y}+
+          </option>
+        ))}
+      </select>
     );
   }
   if (col.type === "flag") {
@@ -212,6 +205,23 @@ type SortState = { key: string; dir: "asc" | "desc" };
 export function ResultsTable({ columns, rows, defaultSort }: Props) {
   const [sort, setSort] = useState<SortState>({ key: defaultSort.key, dir: defaultSort.dir });
   const [filters, setFilters] = useState<FilterMap>({});
+
+  // Available years per date column — powers the year dropdown in the filter row.
+  const dateYearsByCol = useMemo<Record<string, number[]>>(() => {
+    const out: Record<string, number[]> = {};
+    for (const c of columns) {
+      if (c.type !== "date") continue;
+      const years = new Set<number>();
+      for (const r of rows) {
+        const v = (r as Record<string, unknown>)[c.key];
+        if (!v) continue;
+        const y = parseInt(String(v).slice(0, 4), 10);
+        if (!Number.isNaN(y)) years.add(y);
+      }
+      out[c.key] = [...years].sort((a, b) => a - b);
+    }
+    return out;
+  }, [columns, rows]);
 
   const filtered = useMemo(() => {
     const active = Object.entries(filters).filter(([, f]) => !isFilterEmpty(f));
@@ -323,6 +333,7 @@ export function ResultsTable({ columns, rows, defaultSort }: Props) {
                     col={c}
                     value={filters[c.key]}
                     onChange={(v) => setFilter(c.key, v)}
+                    availableYears={dateYearsByCol[c.key]}
                   />
                 </th>
               ))}

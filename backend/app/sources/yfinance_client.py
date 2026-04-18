@@ -59,39 +59,48 @@ def _fi_get(fi: object, *keys: str):
     return None
 
 
+def _fast_info_sync(ticker: str) -> tuple[float | None, float | None, float | None]:
+    try:
+        t = yf.Ticker(ticker)
+        fi = t.fast_info
+        price = safe_float(_fi_get(fi, "lastPrice", "last_price"))
+        mcap = safe_float(_fi_get(fi, "marketCap", "market_cap"))
+        avg = safe_float(
+            _fi_get(
+                fi,
+                "threeMonthAverageVolume",
+                "three_month_average_volume",
+                "tenDayAverageVolume",
+                "ten_day_average_volume",
+            )
+        )
+        return price, mcap, avg
+    except Exception as e:  # noqa: BLE001
+        log.debug("fast_info failed for %s: %s", ticker, e)
+        return None, None, None
+
+
 async def fast_info(ticker: str) -> FastInfo:
     async with _sem:
         await asyncio.sleep(random.uniform(0.0, 0.25))
-        try:
-            t = await _to_thread(yf.Ticker, ticker)
-            fi = t.fast_info
-            price = safe_float(_fi_get(fi, "lastPrice", "last_price"))
-            mcap = safe_float(_fi_get(fi, "marketCap", "market_cap"))
-            avg = safe_float(
-                _fi_get(
-                    fi,
-                    "threeMonthAverageVolume",
-                    "three_month_average_volume",
-                    "tenDayAverageVolume",
-                    "ten_day_average_volume",
-                )
-            )
-            return FastInfo(price=price, market_cap=mcap, avg_volume=avg)
-        except Exception as e:  # noqa: BLE001
-            log.debug("fast_info failed for %s: %s", ticker, e)
-            return FastInfo(None, None, None)
+        price, mcap, avg = await _to_thread(_fast_info_sync, ticker)
+        return FastInfo(price=price, market_cap=mcap, avg_volume=avg)
+
+
+def _options_sync(ticker: str) -> list[str]:
+    try:
+        t = yf.Ticker(ticker)
+        opts = t.options
+        return list(opts) if opts else []
+    except Exception as e:  # noqa: BLE001
+        log.debug("options failed for %s: %s", ticker, e)
+        return []
 
 
 async def option_expiries(ticker: str) -> list[str]:
     async with _sem:
         await asyncio.sleep(random.uniform(0.0, 0.25))
-        try:
-            t = await _to_thread(yf.Ticker, ticker)
-            opts = t.options
-            return list(opts) if opts else []
-        except Exception as e:  # noqa: BLE001
-            log.debug("options failed for %s: %s", ticker, e)
-            return []
+        return await _to_thread(_options_sync, ticker)
 
 
 def _pick_row(df: pd.DataFrame | None, candidates: tuple[str, ...]) -> float | None:

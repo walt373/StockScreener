@@ -56,24 +56,6 @@ META = ScreenerMeta(
         ColumnSpec("ni_over_mcap", "NI / mcap", "ratio"),
         ColumnSpec("fcf_over_mcap", "FCF / mcap", "ratio"),
         ColumnSpec("nearest_debt_maturity", "Nearest debt maturity", "string"),
-        ColumnSpec(
-            "bond_price",
-            "Bond price",
-            "money",
-            tooltip="Not available on free tier; set in Bond Overrides.",
-        ),
-        ColumnSpec(
-            "bond_yield",
-            "Bond yield",
-            "pct",
-            tooltip="Not available on free tier; set in Bond Overrides.",
-        ),
-        ColumnSpec(
-            "bond_last_traded",
-            "Bond last traded",
-            "date",
-            tooltip="Not available on free tier; set in Bond Overrides.",
-        ),
         ColumnSpec("going_concern_flag", "Going concern", "flag"),
         ColumnSpec("ch11_mentions", "Ch.11 mentions", "int"),
         ColumnSpec(

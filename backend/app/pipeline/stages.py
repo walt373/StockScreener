@@ -168,6 +168,87 @@ async def stage_universe(db: Session) -> list[Row]:
 # ---------------------------------------------------------------------------
 # Stage B — cheap filter: price, mcap, avg volume
 # ---------------------------------------------------------------------------
+async def stage_batch_market(
+    db: Session, rows: list[Row], run_id: int, *, force: bool, run: RefreshRun | None = None
+) -> None:
+    """Batch-fetch price + avg volume + 1y return + realized vol via yf.download.
+    One yf.download call per 50 tickers. No per-ticker yfinance calls. Populates
+    rows in place."""
+    max_age = settings.incremental_max_age_hours
+    fund_cached: dict[str, FundamentalsCache] = {
+        f.ticker: f for f in db.execute(select(FundamentalsCache)).scalars()
+    }
+    hist_cached: dict[str, HistoryCache] = {
+        h.ticker: h for h in db.execute(select(HistoryCache)).scalars()
+    }
+
+    need_fetch: list[Row] = []
+    for r in rows:
+        fc = fund_cached.get(r.ticker)
+        hc = hist_cached.get(r.ticker)
+        if (
+            not force
+            and fc
+            and hc
+            and _fresh(fc.fetched_at, max_age)
+            and _fresh(hc.fetched_at, max_age)
+            and fc.price is not None
+        ):
+            r.price = fc.price
+            r.avg_volume = fc.avg_volume
+            r.trailing_1y_return = hc.trailing_1y_return
+            r.realized_vol_1y = hc.realized_vol_1y
+        else:
+            need_fetch.append(r)
+
+    prog = ProgressTracker(db, run, total=len(need_fetch))
+
+    CHUNK = 50
+    for i in range(0, len(need_fetch), CHUNK):
+        batch = need_fetch[i : i + CHUNK]
+        tickers = [r.ticker for r in batch]
+        try:
+            history = await yfinance_client.history_batch(tickers, period="1y")
+        except Exception as e:  # noqa: BLE001
+            for r in batch:
+                _log_err(db, run_id, r.ticker, "batch_market_history", e)
+            history = {t: (None, None) for t in tickers}
+
+        try:
+            pv = await yfinance_client.price_volume_batch(tickers)
+        except Exception as e:  # noqa: BLE001
+            for r in batch:
+                _log_err(db, run_id, r.ticker, "batch_market_pv", e)
+            pv = {t: (None, None) for t in tickers}
+
+        for r in batch:
+            ret, vol = history.get(r.ticker, (None, None))
+            r.trailing_1y_return = ret
+            r.realized_vol_1y = vol
+            price, avg_vol = pv.get(r.ticker, (None, None))
+            r.price = price
+            r.avg_volume = avg_vol
+            fc = fund_cached.get(r.ticker)
+            if fc is None:
+                fc = FundamentalsCache(ticker=r.ticker)
+                db.add(fc)
+                fund_cached[r.ticker] = fc
+            fc.price = price
+            fc.avg_volume = avg_vol
+            fc.fetched_at = utcnow()
+            hc = hist_cached.get(r.ticker)
+            if hc is None:
+                hc = HistoryCache(ticker=r.ticker)
+                db.add(hc)
+                hist_cached[r.ticker] = hc
+            hc.trailing_1y_return = ret
+            hc.realized_vol_1y = vol
+            hc.fetched_at = utcnow()
+            prog.tick()
+        db.commit()
+    log.info("Batch market: fetched %d rows", len(need_fetch))
+
+
 async def stage_cheap_filter(
     db: Session, rows: list[Row], run_id: int, *, force: bool, run: RefreshRun | None = None
 ) -> list[Row]:
@@ -490,20 +571,24 @@ async def stage_fundamentals(
 # ---------------------------------------------------------------------------
 # Stage G — EDGAR filings analysis: going concern, Ch.11, debt maturity
 # ---------------------------------------------------------------------------
-async def _xbrl_backfill(r: Row, facts: dict | None) -> None:
-    """Fill missing balance-sheet fields from XBRL when yfinance was sparse."""
+async def _apply_xbrl(r: Row, facts: dict | None) -> None:
+    """XBRL is now the primary source for fundamentals. Overwrites Row fields."""
     balance = edgar.extract_xbrl_balance(facts)
-    r.cash = r.cash if r.cash is not None else balance["cash"]
-    r.current_assets = r.current_assets if r.current_assets is not None else balance["current_assets"]
-    r.total_liabilities = (
-        r.total_liabilities if r.total_liabilities is not None else balance["total_liabilities"]
-    )
-    r.equity = r.equity if r.equity is not None else balance["equity"]
-    r.net_income = r.net_income if r.net_income is not None else balance["net_income"]
-    r.free_cash_flow = r.free_cash_flow if r.free_cash_flow is not None else balance["fcf"]
-    r.shares_outstanding = (
-        r.shares_outstanding if r.shares_outstanding is not None else balance["shares_out"]
-    )
+    r.cash = balance["cash"]
+    r.current_assets = balance["current_assets"]
+    r.total_liabilities = balance["total_liabilities"]
+    r.equity = balance["equity"]
+    r.net_income = balance["net_income"]
+    r.free_cash_flow = balance["fcf"]
+    r.shares_outstanding = balance["shares_out"]
+    r.revenue_growth = balance["revenue_growth"]
+
+
+def stage_compute_mcap(rows: list[Row]) -> None:
+    """Compute market_cap = price × shares_outstanding. In-memory, no I/O."""
+    for r in rows:
+        if r.price is not None and r.shares_outstanding is not None:
+            r.market_cap = r.price * r.shares_outstanding
 
 
 async def stage_filings(
@@ -592,7 +677,21 @@ async def stage_filings(
                 r.nearest_debt_maturity = m.nearest_maturity_date
 
             if facts is not None:
-                await _xbrl_backfill(r, facts)
+                await _apply_xbrl(r, facts)
+            # Also write to fundamentals_cache so future runs can skip XBRL
+            fc = db.get(FundamentalsCache, r.ticker)
+            if fc is None:
+                fc = FundamentalsCache(ticker=r.ticker)
+                db.add(fc)
+            fc.cash = r.cash
+            fc.current_assets = r.current_assets
+            fc.total_liabilities = r.total_liabilities
+            fc.equity = r.equity
+            fc.net_income = r.net_income
+            fc.free_cash_flow = r.free_cash_flow
+            fc.revenue_growth = r.revenue_growth
+            fc.shares_outstanding = r.shares_outstanding
+            fc.fetched_at = utcnow()
         finally:
             prog.tick()
 

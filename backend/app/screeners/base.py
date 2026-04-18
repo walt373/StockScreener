@@ -29,7 +29,16 @@ class ScreenerMeta:
 class Screener(Protocol):
     meta: ScreenerMeta
 
-    def hard_filters(self, row: dict[str, Any]) -> bool: ...
+    def pre_filter(self, row: dict[str, Any]) -> bool:
+        """Cheap filter using only batch-stage data (price, avg_volume, 1y return,
+        exchange, financial_status). Runs BEFORE EDGAR and per-ticker yfinance,
+        so expensive stages only touch candidates."""
+        ...
+
+    def hard_filters(self, row: dict[str, Any]) -> bool:
+        """Final gate using all fetched data. Applied at materialization."""
+        ...
+
     def project(self, row: dict[str, Any]) -> dict[str, Any]: ...
 
 

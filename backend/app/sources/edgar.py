@@ -123,7 +123,8 @@ def _latest_usd_fact(fact: dict) -> tuple[float | None, date | None]:
 
 def extract_xbrl_balance(facts: dict | None) -> dict[str, float | None]:
     """Extract latest balance sheet numbers from companyfacts.
-    Returns dict with keys: cash, current_assets, total_liabilities, equity, net_income, fcf, shares_out.
+    Returns dict with keys: cash, current_assets, total_liabilities, equity,
+    net_income, fcf, shares_out, revenue_growth.
     """
     out: dict[str, float | None] = {
         "cash": None,
@@ -133,6 +134,7 @@ def extract_xbrl_balance(facts: dict | None) -> dict[str, float | None]:
         "net_income": None,
         "fcf": None,
         "shares_out": None,
+        "revenue_growth": None,
     }
     if not facts:
         return out
@@ -181,6 +183,24 @@ def extract_xbrl_balance(facts: dict | None) -> dict[str, float | None]:
         out["fcf"] = ocf - capex  # capex here is a positive outflow
     shares = _pick(dei, ("EntityCommonStockSharesOutstanding",))
     out["shares_out"] = shares
+
+    # Revenue growth: compare latest two annual revenues
+    for key in ("Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax"):
+        fact = us_gaap.get(key)
+        if not fact:
+            continue
+        usd = fact.get("units", {}).get("USD") or []
+        annuals = [r for r in usd if r.get("fp") == "FY" and r.get("val") is not None]
+        annuals.sort(key=lambda r: r.get("end", ""), reverse=True)
+        if len(annuals) >= 2 and annuals[1]["val"]:
+            try:
+                cur = float(annuals[0]["val"])
+                prev = float(annuals[1]["val"])
+                if prev != 0:
+                    out["revenue_growth"] = (cur - prev) / abs(prev)
+                    break
+            except (TypeError, ValueError):
+                continue
     return out
 
 

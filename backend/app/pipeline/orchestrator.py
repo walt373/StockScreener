@@ -13,18 +13,6 @@ from . import stages
 
 log = logging.getLogger(__name__)
 
-_STAGE_NAMES = [
-    "universe",
-    "cheap_filter",
-    "options",
-    "filer_check",
-    "history",
-    "fundamentals",
-    "filings",
-    "shortint_bonds",
-    "materialize",
-]
-
 
 def _set_stage(db: Session, run: RefreshRun, name: str, done: int, total: int) -> None:
     run.stage = name
@@ -97,40 +85,44 @@ async def _run_stages(
     db.commit()
     _set_stage(db, run, "universe", 1, 1)
 
-    # B. Cheap filter
-    run.stage = "cheap_filter"
+    # B. Batch market data (price + volume + 1y history) — ONE yf.download per 50 tickers
+    run.stage = "batch_market"
     db.commit()
-    rows = await stages.stage_cheap_filter(db, rows, run.id, force=force, run=run)
+    await stages.stage_batch_market(db, rows, run.id, force=force, run=run)
 
-    # C. Options gate
-    run.stage = "options"
+    # B.5 PRE-FILTER — apply union of all screeners' cheap-data filters.
+    # Drops ~80% of universe before any EDGAR or per-ticker yfinance work.
+    run.stage = "pre_filter"
     db.commit()
-    rows = await stages.stage_options(db, rows, run.id, force=force, run=run)
+    before = len(rows)
+    rows = [r for r in rows if any(s.pre_filter(asdict(r)) for s in screeners)]
+    log.info("Pre-filter: %d → %d (distress candidates only)", before, len(rows))
 
-    # D. Filer check
+    # C. Filer check (EDGAR — reliable, 10/sec limit)
     run.stage = "filer_check"
     db.commit()
     rows = await stages.stage_filer_check(db, rows, run.id, force=force, run=run)
 
-    # E. History
-    run.stage = "history"
-    db.commit()
-    await stages.stage_history(db, rows, run.id, force=force, run=run)
-
-    # F. Fundamentals
-    run.stage = "fundamentals"
-    db.commit()
-    await stages.stage_fundamentals(db, rows, run.id, force=force, run=run)
-
-    # G. Filings
+    # D. Filings analysis + XBRL fundamentals (primary source now)
     run.stage = "filings"
     db.commit()
     await stages.stage_filings(db, rows, run.id, force=force, run=run)
 
-    # Shortint + bonds
-    _set_stage(db, run, "shortint_bonds", 0, 1)
+    # E. Compute mcap = price × shares_out (free, in-memory)
+    stages.stage_compute_mcap(rows)
+
+    # F. Options gate — per-ticker yfinance, but only on survivors (~200-300 calls)
+    run.stage = "options"
+    db.commit()
+    rows = await stages.stage_options(db, rows, run.id, force=force, run=run)
+
+    # G. Shortint (FINRA) + bond overrides
+    run.stage = "shortint_bonds"
+    run.progress_done, run.progress_total = 0, 1
+    db.commit()
     await stages.stage_shortint_and_bonds(db, rows, run.id)
-    _set_stage(db, run, "shortint_bonds", 1, 1)
+    run.progress_done = 1
+    db.commit()
 
     # H. Materialize per screener
     _set_stage(db, run, "materialize", 0, len(screeners))

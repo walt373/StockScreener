@@ -179,6 +179,8 @@ def _materialize(db: Session, run_id: int, screener: Any, rows: list[stages.Row]
                 avg_volume=p.get("avg_volume"),
                 cash=p.get("cash"),
                 current_assets=p.get("current_assets"),
+                current_liabilities=p.get("current_liabilities"),
+                current_ratio=p.get("current_ratio"),
                 total_liabilities=p.get("total_liabilities"),
                 total_assets=p.get("total_assets"),
                 equity=p.get("equity"),

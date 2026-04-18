@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
-ColumnType = Literal["string", "money", "int", "pct", "date", "flag", "ratio"]
+ColumnType = Literal["string", "money", "int", "pct", "date", "flag", "ratio", "multiple"]
 
 
 @dataclass

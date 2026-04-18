@@ -4,6 +4,7 @@ import {
   formatDate,
   formatInt,
   formatMoney,
+  formatMultiple,
   formatPct,
   formatRatio,
   formatString,
@@ -43,6 +44,12 @@ function renderCell(col: ColumnSpec, value: unknown): JSX.Element {
       const cls = n < 0 ? "cell-neg" : n > 0 ? "cell-pos" : "";
       return <span className={cls}>{formatRatio(n)}</span>;
     }
+    case "multiple": {
+      const n = value as number;
+      // For current ratio: <1 = red (illiquid), >=1 = neutral
+      const cls = n < 1 ? "cell-neg" : "";
+      return <span className={cls}>{formatMultiple(n)}</span>;
+    }
     case "date":
       return <span>{formatDate(value as string)}</span>;
     case "flag": {
@@ -65,7 +72,7 @@ type Filter = NumFilter | DateFilter | StringFilter | FlagFilter;
 type FilterMap = Record<string, Filter>;
 
 function isNumericCol(t: ColumnSpec["type"]): boolean {
-  return t === "money" || t === "int" || t === "pct" || t === "ratio";
+  return t === "money" || t === "int" || t === "pct" || t === "ratio" || t === "multiple";
 }
 
 function matchesFilter(col: ColumnSpec, value: unknown, filter: Filter | undefined): boolean {

@@ -97,6 +97,8 @@ def api_screener_results(
                 "avg_volume": r.avg_volume,
                 "cash": r.cash,
                 "current_assets": r.current_assets,
+                "current_liabilities": r.current_liabilities,
+                "current_ratio": r.current_ratio,
                 "total_liabilities": r.total_liabilities,
                 "total_assets": r.total_assets,
                 "equity": r.equity,

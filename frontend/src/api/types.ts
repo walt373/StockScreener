@@ -1,4 +1,4 @@
-export type ColumnType = "string" | "money" | "int" | "pct" | "date" | "flag" | "ratio";
+export type ColumnType = "string" | "money" | "int" | "pct" | "date" | "flag" | "ratio" | "multiple";
 
 export interface ColumnSpec {
   key: string;
@@ -38,6 +38,8 @@ export interface ResultRow {
   avg_volume: number | null;
   cash: number | null;
   current_assets: number | null;
+  current_liabilities: number | null;
+  current_ratio: number | null;
   total_assets: number | null;
   total_liabilities: number | null;
   equity: number | null;

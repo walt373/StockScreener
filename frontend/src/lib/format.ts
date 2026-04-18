@@ -34,6 +34,11 @@ export function formatRatio(v: number | null | undefined): string {
   return `${sign}${v.toFixed(3)}`;
 }
 
+export function formatMultiple(v: number | null | undefined): string {
+  if (v === null || v === undefined || !isFinite(v)) return "—";
+  return `${v.toFixed(2)}x`;
+}
+
 export function formatDate(v: string | null | undefined): string {
   if (!v) return "—";
   return v.slice(0, 10);

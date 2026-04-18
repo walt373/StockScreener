@@ -41,7 +41,12 @@ META = ScreenerMeta(
         ColumnSpec("market_cap", "Market cap", "money"),
         ColumnSpec("avg_volume", "Avg volume", "int"),
         ColumnSpec("cash", "Cash", "money"),
-        ColumnSpec("current_assets", "Current assets", "money"),
+        ColumnSpec(
+            "current_ratio",
+            "Current ratio",
+            "multiple",
+            tooltip="Current assets / current liabilities. <1 means short-term liabilities exceed short-term assets.",
+        ),
         ColumnSpec("total_liabilities", "Total liabilities", "money"),
         ColumnSpec("equity", "Equity", "money"),
         ColumnSpec(
@@ -132,6 +137,8 @@ class BankruptcyScreener:
             "avg_volume": row.get("avg_volume"),
             "cash": row.get("cash"),
             "current_assets": row.get("current_assets"),
+            "current_liabilities": row.get("current_liabilities"),
+            "current_ratio": safe_div(row.get("current_assets"), row.get("current_liabilities")),
             "total_liabilities": row.get("total_liabilities"),
             "total_assets": row.get("total_assets"),
             "equity": row.get("equity"),

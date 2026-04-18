@@ -18,6 +18,12 @@ log = logging.getLogger(__name__)
 
 _sem = asyncio.Semaphore(settings.yf_concurrency)
 
+# Global circuit breaker: if one task is rate-limited, all tasks pause until
+# this timestamp (monotonic seconds). Prevents a thundering herd of retries.
+_cooldown_until: float = 0.0
+_cooldown_lock = asyncio.Lock()
+_COOLDOWN_SECONDS = 600  # 10 minutes per rate-limit incident
+
 
 def _is_rate_limited(e: BaseException) -> bool:
     name = type(e).__name__
@@ -30,15 +36,43 @@ def _is_rate_limited(e: BaseException) -> bool:
     )
 
 
+async def _wait_for_cooldown() -> None:
+    """Block until the global rate-limit cooldown expires."""
+    import time
+
+    while True:
+        remaining = _cooldown_until - time.monotonic()
+        if remaining <= 0:
+            return
+        # Sleep in short slices so the log shows we're waiting, not hung
+        await asyncio.sleep(min(remaining, 30))
+
+
+async def _note_rate_limit() -> None:
+    """Bump the cooldown timestamp. First time logs a warning; subsequent calls within
+    cooldown are silent to avoid log spam."""
+    import time
+
+    global _cooldown_until
+    async with _cooldown_lock:
+        now = time.monotonic()
+        was_in_cooldown = _cooldown_until > now
+        _cooldown_until = max(_cooldown_until, now + _COOLDOWN_SECONDS)
+        remaining = _cooldown_until - now
+    if not was_in_cooldown:
+        log.warning(
+            "yfinance rate-limited by Yahoo — ALL tasks pausing %.0fs", remaining
+        )
+
+
 async def _backoff_if_ratelimited(e: BaseException, attempt: int) -> bool:
-    """Returns True if we should retry after sleeping."""
+    """Returns True if we should retry. Trips the circuit breaker on first hit."""
     if not _is_rate_limited(e):
         return False
-    if attempt >= 3:
-        return False
-    delay = 30.0 * (2**attempt) + random.uniform(0, 5)  # 30, 60, 120s
-    log.warning("yfinance rate-limited — sleeping %.0fs (attempt %d)", delay, attempt + 1)
-    await asyncio.sleep(delay)
+    await _note_rate_limit()
+    if attempt >= 2:
+        return False  # don't waste more cycles; let the stage move on
+    await _wait_for_cooldown()
     return True
 
 
@@ -104,7 +138,8 @@ def _fast_info_sync(ticker: str) -> tuple[float | None, float | None, float | No
 
 
 async def fast_info(ticker: str) -> FastInfo:
-    for attempt in range(4):
+    for attempt in range(3):
+        await _wait_for_cooldown()
         async with _sem:
             await asyncio.sleep(random.uniform(0.3, 0.9))
             price, mcap, avg, err = await _to_thread(_fast_info_sync, ticker)
@@ -125,7 +160,8 @@ def _options_sync(ticker: str) -> tuple[list[str], BaseException | None]:
 
 
 async def option_expiries(ticker: str) -> list[str]:
-    for attempt in range(4):
+    for attempt in range(3):
+        await _wait_for_cooldown()
         async with _sem:
             await asyncio.sleep(random.uniform(0.3, 0.9))
             opts, err = await _to_thread(_options_sync, ticker)
@@ -165,8 +201,9 @@ def _pick_row(df: pd.DataFrame | None, candidates: tuple[str, ...]) -> float | N
 
 
 async def fundamentals(ticker: str) -> tuple[FundamentalsBlob, dict[str, Any]]:
+    await _wait_for_cooldown()
     async with _sem:
-        await asyncio.sleep(random.uniform(0.0, 0.25))
+        await asyncio.sleep(random.uniform(0.3, 0.9))
         try:
             t = await _to_thread(yf.Ticker, ticker)
             bs = await _to_thread(lambda: t.balance_sheet)
@@ -175,7 +212,9 @@ async def fundamentals(ticker: str) -> tuple[FundamentalsBlob, dict[str, Any]]:
             info: dict[str, Any] = {}
             try:
                 info = await _to_thread(lambda: t.info) or {}
-            except Exception:  # noqa: BLE001
+            except Exception as e:  # noqa: BLE001
+                if _is_rate_limited(e):
+                    await _note_rate_limit()
                 info = {}
 
             cash = _pick_row(
@@ -222,6 +261,8 @@ async def fundamentals(ticker: str) -> tuple[FundamentalsBlob, dict[str, Any]]:
                 info,
             )
         except Exception as e:  # noqa: BLE001
+            if _is_rate_limited(e):
+                await _note_rate_limit()
             log.debug("fundamentals failed for %s: %s", ticker, e)
             return FundamentalsBlob(None, None, None, None, None, None, None, None, None), {}
 
@@ -245,6 +286,7 @@ async def price_volume_batch(tickers: list[str]) -> dict[str, tuple[float | None
     """Batch fetch recent price + avg volume via yf.download (much cheaper than per-ticker)."""
     if not tickers:
         return {}
+    await _wait_for_cooldown()
     async with _sem:
         await asyncio.sleep(random.uniform(0.3, 0.9))
         try:
@@ -259,6 +301,8 @@ async def price_volume_batch(tickers: list[str]) -> dict[str, tuple[float | None
                 group_by="ticker",
             )
         except Exception as e:  # noqa: BLE001
+            if _is_rate_limited(e):
+                await _note_rate_limit()
             log.warning("price_volume batch failed (%d tickers): %s", len(tickers), e)
             return {t: (None, None) for t in tickers}
 
@@ -295,8 +339,9 @@ async def history_batch(
     """Return {ticker: (trailing_return, realized_vol)}. Missing tickers map to (None, None)."""
     if not tickers:
         return {}
+    await _wait_for_cooldown()
     async with _sem:
-        await asyncio.sleep(random.uniform(0.0, 0.5))
+        await asyncio.sleep(random.uniform(0.3, 0.9))
         try:
             df = await _to_thread(
                 yf.download,
@@ -309,6 +354,8 @@ async def history_batch(
                 group_by="ticker",
             )
         except Exception as e:  # noqa: BLE001
+            if _is_rate_limited(e):
+                await _note_rate_limit()
             log.warning("yf.download batch failed (%d tickers): %s", len(tickers), e)
             return {t: (None, None) for t in tickers}
 

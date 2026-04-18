@@ -15,10 +15,3 @@ export function useScreenerResults(id: string | null) {
     enabled: !!id,
   });
 }
-
-export function useBondOverrides() {
-  return useQuery({
-    queryKey: ["bond-overrides"],
-    queryFn: () => api.listBondOverrides(),
-  });
-}

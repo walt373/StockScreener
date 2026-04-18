@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import screeners as _screeners  # noqa: F401 triggers registration
-from .api import health, overrides, refresh, screeners
+from .api import health, refresh, screeners
 from .db import init_db
 from .jobs.runner import reconcile_orphaned
 from .jobs.scheduler import start_scheduler, stop_scheduler
@@ -41,7 +41,6 @@ def create_app() -> FastAPI:
     app.include_router(health.router, prefix="/api")
     app.include_router(screeners.router, prefix="/api")
     app.include_router(refresh.router, prefix="/api")
-    app.include_router(overrides.router, prefix="/api")
     return app
 
 

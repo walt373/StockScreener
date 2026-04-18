@@ -1,5 +1,4 @@
 import type {
-  BondOverride,
   RefreshStatus,
   ScreenerListResponse,
   ScreenerResultsResponse,
@@ -26,17 +25,4 @@ export const api = {
     request<RefreshStatus>(
       runId !== undefined ? `/api/refresh/status?run_id=${runId}` : "/api/refresh/status"
     ),
-  listBondOverrides: () => request<{ overrides: BondOverride[] }>("/api/bond-overrides"),
-  upsertBondOverride: (
-    ticker: string,
-    body: Partial<Omit<BondOverride, "ticker" | "updated_at">>
-  ) =>
-    request<{ ticker: string; ok: true }>(`/api/bond-overrides/${ticker}`, {
-      method: "PUT",
-      body: JSON.stringify(body),
-    }),
-  deleteBondOverride: (ticker: string) =>
-    request<{ ticker: string; ok: true }>(`/api/bond-overrides/${ticker}`, {
-      method: "DELETE",
-    }),
 };

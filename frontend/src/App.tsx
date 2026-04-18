@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { ResultsTable } from "./components/ResultsTable";
-import { BondOverridesDialog } from "./components/BondOverridesDialog";
 import { useRefresh } from "./hooks/useRefresh";
 import { useScreenerList, useScreenerResults } from "./hooks/useScreenerResults";
 import { formatRelativeTime } from "./lib/format";
@@ -8,7 +7,6 @@ import { formatRelativeTime } from "./lib/format";
 export function App() {
   const screeners = useScreenerList();
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [showOverrides, setShowOverrides] = useState(false);
   const results = useScreenerResults(selectedId);
   const refresh = useRefresh();
 
@@ -58,7 +56,6 @@ export function App() {
           ))}
         </select>
         <div className="sep" />
-        <button onClick={() => setShowOverrides(true)}>Bond Overrides</button>
         <button
           onClick={() => refresh.trigger({ force: false })}
           disabled={refresh.isRunning}
@@ -99,8 +96,6 @@ export function App() {
           defaultSort={meta.default_sort}
         />
       )}
-
-      {showOverrides && <BondOverridesDialog onClose={() => setShowOverrides(false)} />}
     </div>
   );
 }

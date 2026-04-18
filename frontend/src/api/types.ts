@@ -77,11 +77,3 @@ export interface RefreshStatus {
   error?: string | null;
 }
 
-export interface BondOverride {
-  ticker: string;
-  price: number | null;
-  yield_pct: number | null;
-  last_traded_date: string | null;
-  notes: string | null;
-  updated_at: string | null;
-}

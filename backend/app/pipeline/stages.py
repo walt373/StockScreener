@@ -23,6 +23,7 @@ from ..models import (
     EdgarCompanyCache,
     FilingsFlags,
     FundamentalsCache,
+    RefreshRun,
     HistoryCache,
     OptionsCache,
     ShortInterestFinra,
@@ -89,6 +90,29 @@ def _log_err(db: Session, run_id: int, ticker: str | None, stage: str, e: Except
     )
 
 
+class ProgressTracker:
+    """Increments run.progress_done as workers finish; commits every N ticks."""
+
+    def __init__(self, db: Session, run: RefreshRun | None, total: int, flush_every: int = 20):
+        self.db = db
+        self.run = run
+        self.total = total
+        self.done = 0
+        self.flush_every = flush_every
+        if run is not None:
+            run.progress_done = 0
+            run.progress_total = total
+            db.commit()
+
+    def tick(self) -> None:
+        self.done += 1
+        if self.run is None:
+            return
+        if self.done % self.flush_every == 0 or self.done == self.total:
+            self.run.progress_done = self.done
+            self.db.commit()
+
+
 # ---------------------------------------------------------------------------
 # Stage A — universe
 # ---------------------------------------------------------------------------
@@ -145,35 +169,39 @@ async def stage_universe(db: Session) -> list[Row]:
 # Stage B — cheap filter: price, mcap, avg volume
 # ---------------------------------------------------------------------------
 async def stage_cheap_filter(
-    db: Session, rows: list[Row], run_id: int, *, force: bool
+    db: Session, rows: list[Row], run_id: int, *, force: bool, run: RefreshRun | None = None
 ) -> list[Row]:
     max_age = settings.incremental_max_age_hours
     cached: dict[str, FundamentalsCache] = {
         f.ticker: f for f in db.execute(select(FundamentalsCache)).scalars()
     }
+    prog = ProgressTracker(db, run, total=len(rows))
 
     async def work(r: Row) -> None:
-        c = cached.get(r.ticker)
-        if not force and c and _fresh(c.fetched_at, max_age) and c.price is not None:
-            r.price = c.price
-            r.market_cap = c.market_cap
-            r.avg_volume = c.avg_volume
-            return
         try:
-            fi = await yfinance_client.fast_info(r.ticker)
-        except Exception as e:  # noqa: BLE001
-            _log_err(db, run_id, r.ticker, "cheap_filter", e)
-            return
-        r.price = fi.price
-        r.market_cap = fi.market_cap
-        r.avg_volume = fi.avg_volume
-        if c is None:
-            c = FundamentalsCache(ticker=r.ticker)
-            db.add(c)
-        c.price = fi.price
-        c.market_cap = fi.market_cap
-        c.avg_volume = fi.avg_volume
-        c.fetched_at = utcnow()
+            c = cached.get(r.ticker)
+            if not force and c and _fresh(c.fetched_at, max_age) and c.price is not None:
+                r.price = c.price
+                r.market_cap = c.market_cap
+                r.avg_volume = c.avg_volume
+                return
+            try:
+                fi = await yfinance_client.fast_info(r.ticker)
+            except Exception as e:  # noqa: BLE001
+                _log_err(db, run_id, r.ticker, "cheap_filter", e)
+                return
+            r.price = fi.price
+            r.market_cap = fi.market_cap
+            r.avg_volume = fi.avg_volume
+            if c is None:
+                c = FundamentalsCache(ticker=r.ticker)
+                db.add(c)
+            c.price = fi.price
+            c.market_cap = fi.market_cap
+            c.avg_volume = fi.avg_volume
+            c.fetched_at = utcnow()
+        finally:
+            prog.tick()
 
     await asyncio.gather(*(work(r) for r in rows), return_exceptions=False)
     db.commit()
@@ -197,31 +225,37 @@ async def stage_cheap_filter(
 # ---------------------------------------------------------------------------
 # Stage C — options gate
 # ---------------------------------------------------------------------------
-async def stage_options(db: Session, rows: list[Row], run_id: int, *, force: bool) -> list[Row]:
+async def stage_options(
+    db: Session, rows: list[Row], run_id: int, *, force: bool, run: RefreshRun | None = None
+) -> list[Row]:
     max_age = settings.incremental_max_age_hours
     cached: dict[str, OptionsCache] = {
         o.ticker: o for o in db.execute(select(OptionsCache)).scalars()
     }
+    prog = ProgressTracker(db, run, total=len(rows))
 
     async def work(r: Row) -> None:
-        c = cached.get(r.ticker)
-        if not force and c and _fresh(c.fetched_at, max_age):
-            r.has_options = c.has_options
-            r.furthest_expiry = c.furthest_expiry
-            return
         try:
-            expiries = await yfinance_client.option_expiries(r.ticker)
-        except Exception as e:  # noqa: BLE001
-            _log_err(db, run_id, r.ticker, "options", e)
-            expiries = []
-        r.has_options = bool(expiries)
-        r.furthest_expiry = expiries[-1] if expiries else None
-        if c is None:
-            c = OptionsCache(ticker=r.ticker)
-            db.add(c)
-        c.has_options = r.has_options
-        c.furthest_expiry = r.furthest_expiry
-        c.fetched_at = utcnow()
+            c = cached.get(r.ticker)
+            if not force and c and _fresh(c.fetched_at, max_age):
+                r.has_options = c.has_options
+                r.furthest_expiry = c.furthest_expiry
+                return
+            try:
+                expiries = await yfinance_client.option_expiries(r.ticker)
+            except Exception as e:  # noqa: BLE001
+                _log_err(db, run_id, r.ticker, "options", e)
+                expiries = []
+            r.has_options = bool(expiries)
+            r.furthest_expiry = expiries[-1] if expiries else None
+            if c is None:
+                c = OptionsCache(ticker=r.ticker)
+                db.add(c)
+            c.has_options = r.has_options
+            c.furthest_expiry = r.furthest_expiry
+            c.fetched_at = utcnow()
+        finally:
+            prog.tick()
 
     await asyncio.gather(*(work(r) for r in rows))
     db.commit()
@@ -234,43 +268,47 @@ async def stage_options(db: Session, rows: list[Row], run_id: int, *, force: boo
 # Stage D — filer check via EDGAR submissions (drops ADRs/20-F)
 # ---------------------------------------------------------------------------
 async def stage_filer_check(
-    db: Session, rows: list[Row], run_id: int, *, force: bool
+    db: Session, rows: list[Row], run_id: int, *, force: bool, run: RefreshRun | None = None
 ) -> list[Row]:
     max_age_days = 7  # submissions change when a new filing drops
     cached: dict[str, EdgarCompanyCache] = {
         c.cik: c for c in db.execute(select(EdgarCompanyCache)).scalars()
     }
+    prog = ProgressTracker(db, run, total=len(rows))
 
     async def work(r: Row) -> None:
-        if not r.cik:
-            return
-        c = cached.get(r.cik)
-        if not force and c and _fresh(c.submissions_fetched_at, hours=24 * max_age_days):
-            r.has_us_filing = bool(c.has_us_filing)
-            return
         try:
-            lf = await edgar.latest_10k_10q(r.cik)
-        except Exception as e:  # noqa: BLE001
-            _log_err(db, run_id, r.ticker, "filer_check", e)
-            return
-        has_us = bool(lf.latest_10k_accession or lf.latest_10q_accession)
-        r.has_us_filing = has_us
-        if c is None:
-            c = EdgarCompanyCache(cik=r.cik, ticker=r.ticker)
-            db.add(c)
-        c.ticker = r.ticker
-        c.latest_10k_accession = lf.latest_10k_accession
-        c.latest_10k_primary_doc = lf.latest_10k_primary_doc
-        c.latest_10k_filed = (
-            datetime.combine(lf.latest_10k_filed, datetime.min.time()) if lf.latest_10k_filed else None
-        )
-        c.latest_10q_accession = lf.latest_10q_accession
-        c.latest_10q_primary_doc = lf.latest_10q_primary_doc
-        c.latest_10q_filed = (
-            datetime.combine(lf.latest_10q_filed, datetime.min.time()) if lf.latest_10q_filed else None
-        )
-        c.has_us_filing = has_us
-        c.submissions_fetched_at = utcnow()
+            if not r.cik:
+                return
+            c = cached.get(r.cik)
+            if not force and c and _fresh(c.submissions_fetched_at, hours=24 * max_age_days):
+                r.has_us_filing = bool(c.has_us_filing)
+                return
+            try:
+                lf = await edgar.latest_10k_10q(r.cik)
+            except Exception as e:  # noqa: BLE001
+                _log_err(db, run_id, r.ticker, "filer_check", e)
+                return
+            has_us = bool(lf.latest_10k_accession or lf.latest_10q_accession)
+            r.has_us_filing = has_us
+            if c is None:
+                c = EdgarCompanyCache(cik=r.cik, ticker=r.ticker)
+                db.add(c)
+            c.ticker = r.ticker
+            c.latest_10k_accession = lf.latest_10k_accession
+            c.latest_10k_primary_doc = lf.latest_10k_primary_doc
+            c.latest_10k_filed = (
+                datetime.combine(lf.latest_10k_filed, datetime.min.time()) if lf.latest_10k_filed else None
+            )
+            c.latest_10q_accession = lf.latest_10q_accession
+            c.latest_10q_primary_doc = lf.latest_10q_primary_doc
+            c.latest_10q_filed = (
+                datetime.combine(lf.latest_10q_filed, datetime.min.time()) if lf.latest_10q_filed else None
+            )
+            c.has_us_filing = has_us
+            c.submissions_fetched_at = utcnow()
+        finally:
+            prog.tick()
 
     await asyncio.gather(*(work(r) for r in rows))
     db.commit()
@@ -282,7 +320,9 @@ async def stage_filer_check(
 # ---------------------------------------------------------------------------
 # Stage E — history / 1y return / realized vol
 # ---------------------------------------------------------------------------
-async def stage_history(db: Session, rows: list[Row], run_id: int, *, force: bool) -> None:
+async def stage_history(
+    db: Session, rows: list[Row], run_id: int, *, force: bool, run: RefreshRun | None = None
+) -> None:
     max_age = settings.incremental_max_age_hours
     cached: dict[str, HistoryCache] = {
         h.ticker: h for h in db.execute(select(HistoryCache)).scalars()
@@ -296,6 +336,8 @@ async def stage_history(db: Session, rows: list[Row], run_id: int, *, force: boo
             r.realized_vol_1y = c.realized_vol_1y
         else:
             todo.append(r)
+
+    prog = ProgressTracker(db, run, total=len(todo), flush_every=1)
 
     # Batch in chunks of 50
     CHUNK = 50
@@ -319,6 +361,7 @@ async def stage_history(db: Session, rows: list[Row], run_id: int, *, force: boo
             c.trailing_1y_return = ret
             c.realized_vol_1y = vol
             c.fetched_at = utcnow()
+            prog.tick()
         db.commit()
     log.info("History: computed for %d tickers", len(todo))
 
@@ -327,63 +370,67 @@ async def stage_history(db: Session, rows: list[Row], run_id: int, *, force: boo
 # Stage F — fundamentals (balance sheet, income, cashflow, info)
 # ---------------------------------------------------------------------------
 async def stage_fundamentals(
-    db: Session, rows: list[Row], run_id: int, *, force: bool
+    db: Session, rows: list[Row], run_id: int, *, force: bool, run: RefreshRun | None = None
 ) -> None:
     max_age = settings.incremental_max_age_hours
     cached: dict[str, FundamentalsCache] = {
         f.ticker: f for f in db.execute(select(FundamentalsCache)).scalars()
     }
+    prog = ProgressTracker(db, run, total=len(rows))
 
     async def work(r: Row) -> None:
-        c = cached.get(r.ticker)
-        if (
-            not force
-            and c
-            and _fresh(c.fetched_at, max_age)
-            and c.total_liabilities is not None
-        ):
-            r.cash = c.cash
-            r.current_assets = c.current_assets
-            r.total_liabilities = c.total_liabilities
-            r.equity = c.equity
-            r.revenue_growth = c.revenue_growth
-            r.net_income = c.net_income
-            r.free_cash_flow = c.free_cash_flow
-            r.shares_short = c.shares_short
-            r.shares_outstanding = c.shares_outstanding
-            return
         try:
-            blob, info = await yfinance_client.fundamentals(r.ticker)
-        except Exception as e:  # noqa: BLE001
-            _log_err(db, run_id, r.ticker, "fundamentals", e)
-            return
-        r.cash = blob.cash
-        r.current_assets = blob.current_assets
-        r.total_liabilities = blob.total_liabilities
-        r.equity = blob.equity
-        r.revenue_growth = blob.revenue_growth
-        r.net_income = blob.net_income
-        r.free_cash_flow = blob.free_cash_flow
-        r.shares_short = blob.shares_short
-        r.shares_outstanding = blob.shares_outstanding
+            c = cached.get(r.ticker)
+            if (
+                not force
+                and c
+                and _fresh(c.fetched_at, max_age)
+                and c.total_liabilities is not None
+            ):
+                r.cash = c.cash
+                r.current_assets = c.current_assets
+                r.total_liabilities = c.total_liabilities
+                r.equity = c.equity
+                r.revenue_growth = c.revenue_growth
+                r.net_income = c.net_income
+                r.free_cash_flow = c.free_cash_flow
+                r.shares_short = c.shares_short
+                r.shares_outstanding = c.shares_outstanding
+                return
+            try:
+                blob, info = await yfinance_client.fundamentals(r.ticker)
+            except Exception as e:  # noqa: BLE001
+                _log_err(db, run_id, r.ticker, "fundamentals", e)
+                return
+            r.cash = blob.cash
+            r.current_assets = blob.current_assets
+            r.total_liabilities = blob.total_liabilities
+            r.equity = blob.equity
+            r.revenue_growth = blob.revenue_growth
+            r.net_income = blob.net_income
+            r.free_cash_flow = blob.free_cash_flow
+            r.shares_short = blob.shares_short
+            r.shares_outstanding = blob.shares_outstanding
 
-        if c is None:
-            c = FundamentalsCache(ticker=r.ticker)
-            db.add(c)
-        c.cash = blob.cash
-        c.current_assets = blob.current_assets
-        c.total_liabilities = blob.total_liabilities
-        c.equity = blob.equity
-        c.revenue_growth = blob.revenue_growth
-        c.net_income = blob.net_income
-        c.free_cash_flow = blob.free_cash_flow
-        c.shares_short = blob.shares_short
-        c.shares_outstanding = blob.shares_outstanding
-        try:
-            c.raw_json = json.dumps({k: info.get(k) for k in list(info)[:50]}, default=str)[:4000]
-        except Exception:  # noqa: BLE001
-            c.raw_json = None
-        c.fetched_at = utcnow()
+            if c is None:
+                c = FundamentalsCache(ticker=r.ticker)
+                db.add(c)
+            c.cash = blob.cash
+            c.current_assets = blob.current_assets
+            c.total_liabilities = blob.total_liabilities
+            c.equity = blob.equity
+            c.revenue_growth = blob.revenue_growth
+            c.net_income = blob.net_income
+            c.free_cash_flow = blob.free_cash_flow
+            c.shares_short = blob.shares_short
+            c.shares_outstanding = blob.shares_outstanding
+            try:
+                c.raw_json = json.dumps({k: info.get(k) for k in list(info)[:50]}, default=str)[:4000]
+            except Exception:  # noqa: BLE001
+                c.raw_json = None
+            c.fetched_at = utcnow()
+        finally:
+            prog.tick()
 
     await asyncio.gather(*(work(r) for r in rows))
     db.commit()
@@ -409,7 +456,9 @@ async def _xbrl_backfill(r: Row, facts: dict | None) -> None:
     )
 
 
-async def stage_filings(db: Session, rows: list[Row], run_id: int, *, force: bool) -> None:
+async def stage_filings(
+    db: Session, rows: list[Row], run_id: int, *, force: bool, run: RefreshRun | None = None
+) -> None:
     companies: dict[str, EdgarCompanyCache] = {
         c.cik: c for c in db.execute(select(EdgarCompanyCache)).scalars() if c.cik
     }
@@ -419,84 +468,84 @@ async def stage_filings(db: Session, rows: list[Row], run_id: int, *, force: boo
     maturities_by_cik: dict[str, DebtMaturity] = {
         m.cik: m for m in db.execute(select(DebtMaturity)).scalars()
     }
+    prog = ProgressTracker(db, run, total=len(rows))
 
     async def work(r: Row) -> None:
-        if not r.cik:
-            return
-        c = companies.get(r.cik)
-        if c is None:
-            return
-        # Pick the most recent of 10-K / 10-Q
-        candidates = [
-            (c.latest_10k_accession, c.latest_10k_primary_doc, c.latest_10k_filed, "10-K"),
-            (c.latest_10q_accession, c.latest_10q_primary_doc, c.latest_10q_filed, "10-Q"),
-        ]
-        candidates = [x for x in candidates if x[0] and x[1]]
-        candidates.sort(key=lambda x: x[2] or datetime.min, reverse=True)
+        try:
+            if not r.cik:
+                return
+            c = companies.get(r.cik)
+            if c is None:
+                return
+            candidates = [
+                (c.latest_10k_accession, c.latest_10k_primary_doc, c.latest_10k_filed, "10-K"),
+                (c.latest_10q_accession, c.latest_10q_primary_doc, c.latest_10q_filed, "10-Q"),
+            ]
+            candidates = [x for x in candidates if x[0] and x[1]]
+            candidates.sort(key=lambda x: x[2] or datetime.min, reverse=True)
 
-        gc_flag = False
-        ch11 = 0
-        if candidates:
-            acc, primary, filed, form = candidates[0]
-            cached_flag = flags_by_accession.get(acc)
-            if cached_flag and not force:
-                gc_flag = cached_flag.going_concern_flag
-                ch11 = cached_flag.ch11_mention_count
-            else:
-                # Cheap pre-check: full-text search hits for phrases
-                try:
-                    has_phrase = (
-                        await edgar.fulltext_has_phrase(r.cik, acc, "substantial doubt")
-                        or await edgar.fulltext_has_phrase(r.cik, acc, "chapter 11")
-                    )
-                except Exception as e:  # noqa: BLE001
-                    _log_err(db, run_id, r.ticker, "filings_fulltext", e)
-                    has_phrase = True
-                if has_phrase:
+            gc_flag = False
+            ch11 = 0
+            if candidates:
+                acc, primary, filed, form = candidates[0]
+                cached_flag = flags_by_accession.get(acc)
+                if cached_flag and not force:
+                    gc_flag = cached_flag.going_concern_flag
+                    ch11 = cached_flag.ch11_mention_count
+                else:
                     try:
-                        html = await edgar.fetch_filing_html(r.cik, acc, primary)
-                        gc_flag, ch11 = analyze_filing_html(html)
+                        has_phrase = (
+                            await edgar.fulltext_has_phrase(r.cik, acc, "substantial doubt")
+                            or await edgar.fulltext_has_phrase(r.cik, acc, "chapter 11")
+                        )
                     except Exception as e:  # noqa: BLE001
-                        _log_err(db, run_id, r.ticker, "filings_fetch", e)
-                filed_dt = filed if isinstance(filed, datetime) else None
-                if cached_flag is None:
-                    cached_flag = FilingsFlags(accession=acc, cik=r.cik)
-                    db.add(cached_flag)
-                cached_flag.form_type = form
-                cached_flag.filed_at = filed_dt
-                cached_flag.going_concern_flag = gc_flag
-                cached_flag.ch11_mention_count = ch11
-                cached_flag.fetched_at = utcnow()
-        r.going_concern_flag = gc_flag
-        r.ch11_mentions = ch11
+                        _log_err(db, run_id, r.ticker, "filings_fulltext", e)
+                        has_phrase = True
+                    if has_phrase:
+                        try:
+                            html = await edgar.fetch_filing_html(r.cik, acc, primary)
+                            gc_flag, ch11 = analyze_filing_html(html)
+                        except Exception as e:  # noqa: BLE001
+                            _log_err(db, run_id, r.ticker, "filings_fetch", e)
+                    filed_dt = filed if isinstance(filed, datetime) else None
+                    if cached_flag is None:
+                        cached_flag = FilingsFlags(accession=acc, cik=r.cik)
+                        db.add(cached_flag)
+                    cached_flag.form_type = form
+                    cached_flag.filed_at = filed_dt
+                    cached_flag.going_concern_flag = gc_flag
+                    cached_flag.ch11_mention_count = ch11
+                    cached_flag.fetched_at = utcnow()
+            r.going_concern_flag = gc_flag
+            r.ch11_mentions = ch11
 
-        # Debt maturity via companyfacts XBRL (cache 7 days)
-        m = maturities_by_cik.get(r.cik)
-        need_xbrl = force or m is None or not _fresh(m.fetched_at, 24 * 7)
-        facts: dict | None = None
-        if need_xbrl:
-            try:
-                facts = await edgar.fetch_companyfacts(r.cik)
-            except Exception as e:  # noqa: BLE001
-                _log_err(db, run_id, r.ticker, "xbrl", e)
-                facts = None
-            d_iso, src = edgar.extract_nearest_debt_maturity(facts)
-            if m is None:
-                m = DebtMaturity(cik=r.cik)
-                db.add(m)
-            m.nearest_maturity_date = d_iso
-            m.source_fact = src
-            m.fetched_at = utcnow()
-            if c is not None:
-                c.companyfacts_fetched_at = utcnow()
-            r.nearest_debt_maturity = d_iso
-        else:
-            r.nearest_debt_maturity = m.nearest_maturity_date
+            m = maturities_by_cik.get(r.cik)
+            need_xbrl = force or m is None or not _fresh(m.fetched_at, 24 * 7)
+            facts: dict | None = None
+            if need_xbrl:
+                try:
+                    facts = await edgar.fetch_companyfacts(r.cik)
+                except Exception as e:  # noqa: BLE001
+                    _log_err(db, run_id, r.ticker, "xbrl", e)
+                    facts = None
+                d_iso, src = edgar.extract_nearest_debt_maturity(facts)
+                if m is None:
+                    m = DebtMaturity(cik=r.cik)
+                    db.add(m)
+                m.nearest_maturity_date = d_iso
+                m.source_fact = src
+                m.fetched_at = utcnow()
+                if c is not None:
+                    c.companyfacts_fetched_at = utcnow()
+                r.nearest_debt_maturity = d_iso
+            else:
+                r.nearest_debt_maturity = m.nearest_maturity_date
 
-        if facts is not None:
-            await _xbrl_backfill(r, facts)
+            if facts is not None:
+                await _xbrl_backfill(r, facts)
+        finally:
+            prog.tick()
 
-    # Fan out with the EDGAR limiter serializing the actual HTTP calls
     await asyncio.gather(*(work(r) for r in rows))
     db.commit()
     log.info("Filings analysis: done for %d rows", len(rows))

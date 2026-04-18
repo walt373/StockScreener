@@ -98,34 +98,34 @@ async def _run_stages(
     _set_stage(db, run, "universe", 1, 1)
 
     # B. Cheap filter
-    _set_stage(db, run, "cheap_filter", 0, len(rows))
-    rows = await stages.stage_cheap_filter(db, rows, run.id, force=force)
-    _set_stage(db, run, "cheap_filter", len(rows), len(rows))
+    run.stage = "cheap_filter"
+    db.commit()
+    rows = await stages.stage_cheap_filter(db, rows, run.id, force=force, run=run)
 
     # C. Options gate
-    _set_stage(db, run, "options", 0, len(rows))
-    rows = await stages.stage_options(db, rows, run.id, force=force)
-    _set_stage(db, run, "options", len(rows), len(rows))
+    run.stage = "options"
+    db.commit()
+    rows = await stages.stage_options(db, rows, run.id, force=force, run=run)
 
     # D. Filer check
-    _set_stage(db, run, "filer_check", 0, len(rows))
-    rows = await stages.stage_filer_check(db, rows, run.id, force=force)
-    _set_stage(db, run, "filer_check", len(rows), len(rows))
+    run.stage = "filer_check"
+    db.commit()
+    rows = await stages.stage_filer_check(db, rows, run.id, force=force, run=run)
 
     # E. History
-    _set_stage(db, run, "history", 0, len(rows))
-    await stages.stage_history(db, rows, run.id, force=force)
-    _set_stage(db, run, "history", len(rows), len(rows))
+    run.stage = "history"
+    db.commit()
+    await stages.stage_history(db, rows, run.id, force=force, run=run)
 
     # F. Fundamentals
-    _set_stage(db, run, "fundamentals", 0, len(rows))
-    await stages.stage_fundamentals(db, rows, run.id, force=force)
-    _set_stage(db, run, "fundamentals", len(rows), len(rows))
+    run.stage = "fundamentals"
+    db.commit()
+    await stages.stage_fundamentals(db, rows, run.id, force=force, run=run)
 
     # G. Filings
-    _set_stage(db, run, "filings", 0, len(rows))
-    await stages.stage_filings(db, rows, run.id, force=force)
-    _set_stage(db, run, "filings", len(rows), len(rows))
+    run.stage = "filings"
+    db.commit()
+    await stages.stage_filings(db, rows, run.id, force=force, run=run)
 
     # Shortint + bonds
     _set_stage(db, run, "shortint_bonds", 0, 1)

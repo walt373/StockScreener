@@ -763,22 +763,38 @@ async def stage_filings(
 
             if facts is not None:
                 await _apply_xbrl(r, facts)
-            # Also write to fundamentals_cache so future runs can skip XBRL
-            fc = db.get(FundamentalsCache, r.ticker)
-            if fc is None:
-                fc = FundamentalsCache(ticker=r.ticker)
-                db.add(fc)
-            fc.cash = r.cash
-            fc.current_assets = r.current_assets
-            fc.current_liabilities = r.current_liabilities
-            fc.total_assets = r.total_assets
-            fc.total_liabilities = r.total_liabilities
-            fc.equity = r.equity
-            fc.net_income = r.net_income
-            fc.free_cash_flow = r.free_cash_flow
-            fc.revenue_growth = r.revenue_growth
-            fc.shares_outstanding = r.shares_outstanding
-            fc.fetched_at = utcnow()
+                # Write to fundamentals_cache so future runs can skip XBRL
+                fc = db.get(FundamentalsCache, r.ticker)
+                if fc is None:
+                    fc = FundamentalsCache(ticker=r.ticker)
+                    db.add(fc)
+                fc.cash = r.cash
+                fc.current_assets = r.current_assets
+                fc.current_liabilities = r.current_liabilities
+                fc.total_assets = r.total_assets
+                fc.total_liabilities = r.total_liabilities
+                fc.equity = r.equity
+                fc.net_income = r.net_income
+                fc.free_cash_flow = r.free_cash_flow
+                fc.revenue_growth = r.revenue_growth
+                fc.shares_outstanding = r.shares_outstanding
+                fc.fetched_at = utcnow()
+            else:
+                # Incremental path: XBRL was cached and skipped, so load the fundamentals
+                # we already persisted. Otherwise the Row's fundamentals stay None and
+                # the hard filter (e.g. net_income < 0) drops every ticker.
+                fc = db.get(FundamentalsCache, r.ticker)
+                if fc is not None:
+                    r.cash = fc.cash
+                    r.current_assets = fc.current_assets
+                    r.current_liabilities = fc.current_liabilities
+                    r.total_assets = fc.total_assets
+                    r.total_liabilities = fc.total_liabilities
+                    r.equity = fc.equity
+                    r.net_income = fc.net_income
+                    r.free_cash_flow = fc.free_cash_flow
+                    r.revenue_growth = fc.revenue_growth
+                    r.shares_outstanding = fc.shares_outstanding
         finally:
             prog.tick()
 

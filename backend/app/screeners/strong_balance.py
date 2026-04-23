@@ -87,6 +87,49 @@ class StrongBalanceScreener:
             return False
         return True
 
+    def cache_filter(self, row: dict[str, Any]) -> bool:
+        """Drop rows whose cached fundamentals already confirm a hard_filter
+        failure. Runs before XBRL refetch and option_expiries."""
+        if not row.get("cache_fresh"):
+            return True
+
+        # Current ratio > 3 (strict)
+        ca = row.get("current_assets")
+        cl = row.get("current_liabilities")
+        if ca is not None and cl is not None and cl > 0:
+            if ca / cl <= MIN_CURRENT_RATIO:
+                return False
+
+        # Equity must be positive for P/B to be meaningful
+        equity = row.get("equity")
+        if equity is not None and equity <= 0:
+            return False
+
+        # P/B < 3 — use cached shares_out × fresh batch price to estimate mcap
+        shares_out = row.get("shares_outstanding")
+        price = row.get("price")
+        if (
+            equity is not None
+            and equity > 0
+            and price is not None
+            and shares_out is not None
+            and shares_out > 0
+        ):
+            est_mcap = price * shares_out
+            if est_mcap / equity >= MAX_PRICE_TO_BOOK:
+                return False
+            if est_mcap < MIN_MARKET_CAP:
+                return False
+
+        # OCF > -cash/4 (cash burn not exceeding 25% of the cash pile)
+        cash = row.get("cash")
+        ocf = row.get("operating_cash_flow")
+        if cash is not None and cash > 0 and ocf is not None:
+            if ocf <= OCF_TO_CASH_THRESHOLD * cash:
+                return False
+
+        return True
+
     def hard_filters(self, row: dict[str, Any]) -> bool:
         if not self.pre_filter(row):
             return False

@@ -35,6 +35,13 @@ class Screener(Protocol):
         so expensive stages only touch candidates."""
         ...
 
+    def cache_filter(self, row: dict[str, Any]) -> bool:
+        """Runs after cached fundamentals are hydrated (if cache_fresh=True).
+        Should return False only when cached data confirms this row will fail
+        hard_filters — saves an EDGAR XBRL fetch and yfinance option call.
+        Default (and when row is not cache_fresh): return True."""
+        return True
+
     def hard_filters(self, row: dict[str, Any]) -> bool:
         """Final gate using all fetched data. Applied at materialization."""
         ...

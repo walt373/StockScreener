@@ -95,20 +95,34 @@ async def _run_stages(
     db.commit()
     await stages.stage_optionable_tag(db, rows, run.id, force=force, run=run)
 
-    # B.6. PRE-FILTER — apply union of screener pre-filters (price / vol / exchange /
-    # has_options / not-bankrupt). Drops most of universe before EDGAR.
+    # B.6. PRE-FILTER — batch-data-only gate (price / vol / exchange / has_options /
+    # not-bankrupt). Drops most of universe before EDGAR.
     run.stage = "pre_filter"
     db.commit()
     before = len(rows)
     rows = [r for r in rows if any(s.pre_filter(asdict(r)) for s in screeners)]
     log.info("Pre-filter: %d → %d", before, len(rows))
 
-    # C. Filer check (EDGAR — reliable, 10/sec limit)
+    # C. Filer check (EDGAR submissions — always refresh; short 1h TTL within a run).
+    # Populates latest 10-K / 10-Q accession numbers we need for cache invalidation.
     run.stage = "filer_check"
     db.commit()
     rows = await stages.stage_filer_check(db, rows, run.id, force=force, run=run)
 
-    # D. Filings analysis + XBRL fundamentals (primary source now)
+    # C.5. Hydrate cached fundamentals where EDGAR's current latest accession
+    # matches the accession that produced the cache. Rows without cache or with a
+    # newer filing stay un-hydrated and will get fresh XBRL in stage_filings.
+    stages.stage_hydrate_cached_fundamentals(db, rows)
+
+    # C.6. CACHE FILTER — per-screener drop using freshly-hydrated cache values.
+    # Skips EDGAR XBRL refetches and per-ticker yfinance option_expiries for rows
+    # we already know will fail hard_filters.
+    before = len(rows)
+    rows = [r for r in rows if any(s.cache_filter(asdict(r)) for s in screeners)]
+    log.info("Cache filter: %d → %d (cache-confirmed fails dropped)", before, len(rows))
+
+    # D. Filings analysis + XBRL fundamentals (only rows without a fresh cache hit
+    # will incur a companyfacts fetch; the rest skip via accession match).
     run.stage = "filings"
     db.commit()
     await stages.stage_filings(db, rows, run.id, force=force, run=run)
@@ -116,7 +130,14 @@ async def _run_stages(
     # E. Compute mcap = price × shares_out (free, in-memory)
     stages.stage_compute_mcap(rows)
 
-    # F. Option expiries — per-ticker yfinance, bounded by optionable survivors (~200-300)
+    # E.5. Pre-option-expiries drop — after we have mcap + fresh fundamentals, any
+    # row that fails every screener's hard_filters is dead weight. Dropping here
+    # avoids a yfinance option_expiries call per row.
+    before = len(rows)
+    rows = [r for r in rows if any(s.hard_filters(asdict(r)) for s in screeners)]
+    log.info("Pre-expiry filter: %d → %d", before, len(rows))
+
+    # F. Option expiries — per-ticker yfinance, bounded by hard-filter survivors.
     run.stage = "option_expiries"
     db.commit()
     await stages.stage_option_expiries(db, rows, run.id, force=force, run=run)

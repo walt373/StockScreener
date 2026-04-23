@@ -92,3 +92,59 @@ def test_project_computes_price_to_book():
     assert p["price_to_book"] == 500_000_000 / 200_000_000
     assert p["current_ratio"] == 400_000_000 / 100_000_000
     assert p["operating_cash_flow"] == -10_000_000
+
+
+def test_cache_filter_passes_stale_row():
+    s = StrongBalanceScreener()
+    row = _base_row()
+    row["cache_fresh"] = False
+    # Even with bad cached numbers, stale cache means pass through
+    row["current_assets"] = 10_000_000
+    row["current_liabilities"] = 100_000_000
+    assert s.cache_filter(row) is True
+
+
+def test_cache_filter_drops_low_current_ratio():
+    s = StrongBalanceScreener()
+    row = _base_row()
+    row["cache_fresh"] = True
+    row["current_assets"] = 200_000_000  # CR = 2.0
+    row["current_liabilities"] = 100_000_000
+    assert s.cache_filter(row) is False
+
+
+def test_cache_filter_drops_negative_equity():
+    s = StrongBalanceScreener()
+    row = _base_row()
+    row["cache_fresh"] = True
+    row["equity"] = -10_000_000
+    assert s.cache_filter(row) is False
+
+
+def test_cache_filter_drops_high_price_to_book():
+    s = StrongBalanceScreener()
+    row = _base_row()
+    row["cache_fresh"] = True
+    # shares_out so that price × shares_out = $800M mcap; equity $100M → P/B = 8
+    row["shares_outstanding"] = 160_000_000
+    row["equity"] = 100_000_000
+    assert s.cache_filter(row) is False
+
+
+def test_cache_filter_drops_heavy_cash_burn():
+    s = StrongBalanceScreener()
+    row = _base_row()
+    row["cache_fresh"] = True
+    row["cash"] = 200_000_000
+    row["operating_cash_flow"] = -60_000_000  # burn > 25% of cash
+    assert s.cache_filter(row) is False
+
+
+def test_cache_filter_passes_healthy_row():
+    s = StrongBalanceScreener()
+    row = _base_row()
+    row["cache_fresh"] = True
+    # shares_out sized for P/B = 2.5 (passes)
+    row["shares_outstanding"] = 100_000_000
+    row["equity"] = 200_000_000
+    assert s.cache_filter(row) is True

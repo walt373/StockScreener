@@ -66,6 +66,9 @@ class Row:
     has_options: bool = False
     furthest_expiry: str | None = None
     has_us_filing: bool = False
+    # True if the cached fundamentals loaded into this Row are definitively fresh
+    # (cache's source_accession matches EDGAR's current latest 10-K/10-Q).
+    cache_fresh: bool = False
     nearest_debt_maturity: str | None = None
     going_concern_flag: bool | None = None
     ch11_mentions: int | None = None
@@ -82,6 +85,23 @@ def _fresh(ts: datetime | None, hours: int) -> bool:
         return False
     ts = ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
     return (datetime.now(timezone.utc) - ts) < timedelta(hours=hours)
+
+
+def _latest_periodic_accession(c: EdgarCompanyCache | None) -> str | None:
+    """The accession of whichever of 10-K/10-Q is most recent. Used as the
+    cache key for fundamentals — if either filing changes, companyfacts XBRL
+    has new numbers, so our cache is stale."""
+    if c is None:
+        return None
+    candidates: list[tuple[str, datetime]] = []
+    if c.latest_10k_accession and c.latest_10k_filed:
+        candidates.append((c.latest_10k_accession, c.latest_10k_filed))
+    if c.latest_10q_accession and c.latest_10q_filed:
+        candidates.append((c.latest_10q_accession, c.latest_10q_filed))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: x[1], reverse=True)
+    return candidates[0][0]
 
 
 def _log_err(db: Session, run_id: int, ticker: str | None, stage: str, e: Exception) -> None:
@@ -467,7 +487,9 @@ async def stage_option_expiries(
 async def stage_filer_check(
     db: Session, rows: list[Row], run_id: int, *, force: bool, run: RefreshRun | None = None
 ) -> list[Row]:
-    max_age_days = 7  # submissions change when a new filing drops
+    """Always refresh submissions (short 1h TTL as a safety net within a single run).
+    Accession-based invalidation in stage_filings uses the latest values stored here
+    to know whether cached XBRL is still valid."""
     cached: dict[str, EdgarCompanyCache] = {
         c.cik: c for c in db.execute(select(EdgarCompanyCache)).scalars()
     }
@@ -478,7 +500,8 @@ async def stage_filer_check(
             if not r.cik:
                 return
             c = cached.get(r.cik)
-            if not force and c and _fresh(c.submissions_fetched_at, hours=24 * max_age_days):
+            # Short 1h TTL so we don't re-hit EDGAR multiple times during a single run.
+            if not force and c and _fresh(c.submissions_fetched_at, hours=1):
                 r.has_us_filing = bool(c.has_us_filing)
                 r.sector = c.sic_description
                 r.nt_10k_filed_at = c.latest_nt_10k_filed.date().isoformat() if c.latest_nt_10k_filed else None
@@ -741,8 +764,19 @@ async def stage_filings(
             r.going_concern_flag = gc_flag
             r.ch11_mentions = ch11
 
+            # Accession-based freshness: refetch XBRL only if a new 10-K or 10-Q
+            # has been filed since we last cached. This picks up new filings on the
+            # next run after they're indexed by EDGAR (typically same/next day).
+            latest_accession = _latest_periodic_accession(c)
+            fc_existing = db.get(FundamentalsCache, r.ticker)
+            cache_stale = (
+                force
+                or fc_existing is None
+                or fc_existing.source_accession is None
+                or fc_existing.source_accession != latest_accession
+            )
             m = maturities_by_cik.get(r.cik)
-            need_xbrl = force or m is None or not _fresh(m.fetched_at, 24 * 7)
+            need_xbrl = cache_stale or m is None
             facts: dict | None = None
             if need_xbrl:
                 try:
@@ -781,6 +815,7 @@ async def stage_filings(
                 fc.free_cash_flow = r.free_cash_flow
                 fc.revenue_growth = r.revenue_growth
                 fc.shares_outstanding = r.shares_outstanding
+                fc.source_accession = latest_accession
                 fc.fetched_at = utcnow()
             else:
                 # Incremental path: XBRL was cached and skipped, so load the fundamentals
@@ -805,6 +840,50 @@ async def stage_filings(
     await asyncio.gather(*(work(r) for r in rows))
     db.commit()
     log.info("Filings analysis: done for %d rows", len(rows))
+
+
+# ---------------------------------------------------------------------------
+# Stage — hydrate cached fundamentals into Row (pre-XBRL cache check)
+# ---------------------------------------------------------------------------
+def stage_hydrate_cached_fundamentals(db: Session, rows: list[Row]) -> int:
+    """For each row whose cached XBRL accession matches EDGAR's current latest
+    10-K/10-Q accession, load fundamentals into the Row and set cache_fresh=True.
+    Lets screeners' cache_filter drop rows that definitely won't pass hard_filters
+    before we pay for fresh XBRL fetches and per-ticker yfinance option calls.
+    """
+    cic_by_cik: dict[str, EdgarCompanyCache] = {
+        c.cik: c for c in db.execute(select(EdgarCompanyCache)).scalars() if c.cik
+    }
+    fc_by_ticker: dict[str, FundamentalsCache] = {
+        f.ticker: f for f in db.execute(select(FundamentalsCache)).scalars()
+    }
+    fresh_count = 0
+    for r in rows:
+        if not r.cik:
+            continue
+        c = cic_by_cik.get(r.cik)
+        latest = _latest_periodic_accession(c)
+        if latest is None:
+            continue
+        fc = fc_by_ticker.get(r.ticker)
+        if fc is None or fc.source_accession != latest:
+            continue
+        # Accession matches — trust the cached values.
+        r.cache_fresh = True
+        r.cash = fc.cash
+        r.current_assets = fc.current_assets
+        r.current_liabilities = fc.current_liabilities
+        r.total_assets = fc.total_assets
+        r.total_liabilities = fc.total_liabilities
+        r.equity = fc.equity
+        r.net_income = fc.net_income
+        r.operating_cash_flow = fc.operating_cash_flow
+        r.free_cash_flow = fc.free_cash_flow
+        r.revenue_growth = fc.revenue_growth
+        r.shares_outstanding = fc.shares_outstanding
+        fresh_count += 1
+    log.info("Hydrate: %d / %d rows have fresh cached fundamentals", fresh_count, len(rows))
+    return fresh_count
 
 
 # ---------------------------------------------------------------------------

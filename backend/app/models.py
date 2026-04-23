@@ -70,6 +70,9 @@ class FundamentalsCache(Base):
     free_cash_flow: Mapped[float | None] = mapped_column(Float, nullable=True)
     shares_short: Mapped[float | None] = mapped_column(Float, nullable=True)
     shares_outstanding: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # The 10-K / 10-Q accession whose XBRL produced the cached values.
+    # If the latest periodic accession changes (new filing), the cache is stale.
+    source_accession: Mapped[str | None] = mapped_column(String, nullable=True)
     raw_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 

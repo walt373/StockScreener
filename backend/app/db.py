@@ -52,6 +52,7 @@ _MIGRATIONS: list[tuple[str, str]] = [
     ("fundamentals_cache", "operating_cash_flow FLOAT"),
     ("screener_results", "operating_cash_flow FLOAT"),
     ("screener_results", "price_to_book FLOAT"),
+    ("fundamentals_cache", "source_accession VARCHAR"),
 ]
 
 

@@ -107,3 +107,28 @@ def test_filters_boundary_mega_cap():
     row = _base_row()
     row["market_cap"] = 2_000_000_000  # exactly $2B — passes
     assert s.hard_filters(row) is True
+
+
+def test_cache_filter_keeps_row_when_not_fresh():
+    s = BankruptcyScreener()
+    row = _base_row()
+    row["cache_fresh"] = False
+    # net_income positive but cache not fresh — can't trust → keep
+    row["net_income"] = 1_000_000
+    assert s.cache_filter(row) is True
+
+
+def test_cache_filter_drops_profitable_row_when_fresh():
+    s = BankruptcyScreener()
+    row = _base_row()
+    row["cache_fresh"] = True
+    row["net_income"] = 5_000_000  # profitable — not a bankruptcy candidate
+    assert s.cache_filter(row) is False
+
+
+def test_cache_filter_keeps_loss_making_row_when_fresh():
+    s = BankruptcyScreener()
+    row = _base_row()
+    row["cache_fresh"] = True
+    row["net_income"] = -5_000_000
+    assert s.cache_filter(row) is True

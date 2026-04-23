@@ -106,6 +106,19 @@ class BankruptcyScreener:
             return False
         return True
 
+    def cache_filter(self, row: dict[str, Any]) -> bool:
+        """When the XBRL cache is fresh, drop rows whose cached numbers already
+        guarantee a hard_filters failure. Saves an EDGAR companyfacts fetch and
+        a per-ticker yfinance option_expiries call for each dropped row."""
+        if not row.get("cache_fresh"):
+            return True
+        # Bankruptcy requires trailing net income < 0. Profitable companies are
+        # not candidates, so drop as soon as we can confirm it from cache.
+        ni = row.get("net_income")
+        if ni is not None and ni >= 0:
+            return False
+        return True
+
     def hard_filters(self, row: dict[str, Any]) -> bool:
         """Final gate: adds mcap band + US filer + net-income-negative on top of pre_filter."""
         if not self.pre_filter(row):

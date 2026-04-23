@@ -50,9 +50,11 @@ export interface ResultRow {
   realized_vol_1y: number | null;
   furthest_option_expiry: string | null;
   net_income: number | null;
+  operating_cash_flow: number | null;
   free_cash_flow: number | null;
   ni_over_mcap: number | null;
   fcf_over_mcap: number | null;
+  price_to_book: number | null;
   nearest_debt_maturity: string | null;
   bond_price: number | null;
   bond_yield: number | null;

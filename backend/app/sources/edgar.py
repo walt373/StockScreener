@@ -144,6 +144,7 @@ def extract_xbrl_balance(facts: dict | None) -> dict[str, float | None]:
         "total_liabilities": None,
         "equity": None,
         "net_income": None,
+        "ocf": None,
         "fcf": None,
         "shares_out": None,
         "revenue_growth": None,
@@ -192,6 +193,7 @@ def extract_xbrl_balance(facts: dict | None) -> dict[str, float | None]:
             "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations",
         ),
     )
+    out["ocf"] = ocf
     capex = _pick(us_gaap, ("PaymentsToAcquirePropertyPlantAndEquipment",))
     if ocf is not None and capex is not None:
         out["fcf"] = ocf - capex  # capex here is a positive outflow

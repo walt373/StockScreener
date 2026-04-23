@@ -57,6 +57,7 @@ class Row:
     equity: float | None = None
     revenue_growth: float | None = None
     net_income: float | None = None
+    operating_cash_flow: float | None = None
     free_cash_flow: float | None = None
     shares_short: float | None = None
     shares_outstanding: float | None = None
@@ -664,6 +665,7 @@ async def _apply_xbrl(r: Row, facts: dict | None) -> None:
     r.total_liabilities = balance["total_liabilities"]
     r.equity = balance["equity"]
     r.net_income = balance["net_income"]
+    r.operating_cash_flow = balance["ocf"]
     r.free_cash_flow = balance["fcf"]
     r.shares_outstanding = balance["shares_out"]
     r.revenue_growth = balance["revenue_growth"]
@@ -775,6 +777,7 @@ async def stage_filings(
                 fc.total_liabilities = r.total_liabilities
                 fc.equity = r.equity
                 fc.net_income = r.net_income
+                fc.operating_cash_flow = r.operating_cash_flow
                 fc.free_cash_flow = r.free_cash_flow
                 fc.revenue_growth = r.revenue_growth
                 fc.shares_outstanding = r.shares_outstanding
@@ -792,6 +795,7 @@ async def stage_filings(
                     r.total_liabilities = fc.total_liabilities
                     r.equity = fc.equity
                     r.net_income = fc.net_income
+                    r.operating_cash_flow = fc.operating_cash_flow
                     r.free_cash_flow = fc.free_cash_flow
                     r.revenue_growth = fc.revenue_growth
                     r.shares_outstanding = fc.shares_outstanding

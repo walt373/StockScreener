@@ -10,6 +10,7 @@ MIN_PRICE = 1.0
 MIN_AVG_VOLUME = 200_000.0
 MIN_CURRENT_RATIO = 3.0
 MAX_PRICE_TO_BOOK = 2.5
+MAX_LIABILITIES_TO_ASSETS = 0.50  # liabilities must be < 50% of total assets
 # Operating cash flow must be > -cash / 4. i.e. annual cash burn can't exceed
 # 25% of the cash pile — otherwise the company runs out of runway within 4 years.
 OCF_TO_CASH_THRESHOLD = -0.25
@@ -20,9 +21,9 @@ META = ScreenerMeta(
     description=(
         "NYSE/Nasdaq US-domiciled equities with listed options, "
         "market cap ≥ $50M, price ≥ $1, avg volume ≥ 200K, "
-        "current ratio > 3, price/book < 2.5, and operating cash flow "
-        "burn < 25% of cash. Sorted by price/book ascending "
-        "(cheapest relative to book value first)."
+        "current ratio > 3, price/book < 2.5, liabilities/assets < 50%, "
+        "and operating cash flow burn < 25% of cash. Sorted by price/book "
+        "ascending (cheapest relative to book value first)."
     ),
     default_sort_key="price_to_book",
     default_sort_dir="asc",
@@ -60,6 +61,12 @@ META = ScreenerMeta(
         ),
         ColumnSpec("total_liabilities", "Total liabilities", "money"),
         ColumnSpec("equity", "Equity", "money"),
+        ColumnSpec(
+            "liabilities_over_assets",
+            "Liab / Assets",
+            "pct",
+            tooltip="Total liabilities / total assets. Lower is stronger balance sheet.",
+        ),
         ColumnSpec("revenue_growth", "Revenue growth", "pct"),
         ColumnSpec("trailing_1y_return", "1y return", "pct"),
         ColumnSpec("realized_vol_1y", "Realized vol (1y)", "pct"),
@@ -106,7 +113,7 @@ class StrongBalanceScreener:
         if equity is not None and equity <= 0:
             return False
 
-        # P/B < 3 — use cached shares_out × fresh batch price to estimate mcap
+        # P/B < 2.5 — use cached shares_out × fresh batch price to estimate mcap
         shares_out = row.get("shares_outstanding")
         price = row.get("price")
         if (
@@ -120,6 +127,17 @@ class StrongBalanceScreener:
             if est_mcap / equity >= MAX_PRICE_TO_BOOK:
                 return False
             if est_mcap < MIN_MARKET_CAP:
+                return False
+
+        # Liabilities/assets < 50%
+        total_assets = row.get("total_assets")
+        total_liabilities = row.get("total_liabilities")
+        if (
+            total_assets is not None
+            and total_liabilities is not None
+            and total_assets > 0
+        ):
+            if total_liabilities / total_assets >= MAX_LIABILITIES_TO_ASSETS:
                 return False
 
         # OCF > -cash/4 (cash burn not exceeding 25% of the cash pile)
@@ -148,11 +166,19 @@ class StrongBalanceScreener:
         if ca / cl <= MIN_CURRENT_RATIO:
             return False
 
-        # P/Book < 3 (requires positive equity)
+        # P/Book < 2.5 (requires positive equity)
         equity = row.get("equity")
         if equity is None or equity <= 0:
             return False
         if mcap / equity >= MAX_PRICE_TO_BOOK:
+            return False
+
+        # Liabilities/assets < 50%
+        total_assets = row.get("total_assets")
+        total_liabilities = row.get("total_liabilities")
+        if total_assets is None or total_liabilities is None or total_assets <= 0:
+            return False
+        if total_liabilities / total_assets >= MAX_LIABILITIES_TO_ASSETS:
             return False
 
         # Operating cash flow not burning > 25% of cash per year
@@ -191,7 +217,9 @@ class StrongBalanceScreener:
             "current_ratio": safe_div(ca, cl),
             "price_to_book": safe_div(mcap, equity) if equity and equity > 0 else None,
             "total_liabilities": row.get("total_liabilities"),
+            "total_assets": row.get("total_assets"),
             "equity": equity,
+            "liabilities_over_assets": safe_div(row.get("total_liabilities"), row.get("total_assets")),
             "revenue_growth": row.get("revenue_growth"),
             "trailing_1y_return": row.get("trailing_1y_return"),
             "realized_vol_1y": row.get("realized_vol_1y"),

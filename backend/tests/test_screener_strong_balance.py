@@ -20,6 +20,7 @@ def _base_row() -> dict:
         "operating_cash_flow": -10_000_000,  # burn of $10M vs cash of $200M (-5% per year)
         "equity": 200_000_000,                # P/B = 400M / 200M = 2.0 (< 2.5)
         "total_liabilities": 100_000_000,
+        "total_assets": 300_000_000,          # liab / assets = 0.33 (< 0.50)
     }
 
 
@@ -67,6 +68,22 @@ def test_rejects_high_price_to_book():
     s = StrongBalanceScreener()
     row = _base_row()
     row["equity"] = 100_000_000  # P/B = 400M / 100M = 4.0, must be < 2.5
+    assert s.hard_filters(row) is False
+
+
+def test_rejects_high_liabilities_ratio():
+    s = StrongBalanceScreener()
+    row = _base_row()
+    # liab 200M / assets 300M = 0.67, must be < 0.50
+    row["total_liabilities"] = 200_000_000
+    assert s.hard_filters(row) is False
+
+
+def test_rejects_liabilities_ratio_at_threshold():
+    s = StrongBalanceScreener()
+    row = _base_row()
+    # liab 150M / assets 300M = 0.50 exactly — strict <, so rejects
+    row["total_liabilities"] = 150_000_000
     assert s.hard_filters(row) is False
 
 

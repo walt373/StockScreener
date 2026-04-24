@@ -9,19 +9,22 @@ growing, the pipeline is making progress; if flat, it's genuinely stuck.
 
 from __future__ import annotations
 
+import os
 import sqlite3
-import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
-from app.config import settings  # noqa: E402
+def _db_path() -> str:
+    # Prefer env var, else default relative path (matches app/config.py).
+    env = os.environ.get("DB_PATH")
+    if env:
+        return str(Path(env).expanduser().resolve())
+    here = Path(__file__).resolve().parents[1]
+    return str((here / ".." / "data" / "cache.db").resolve())
 
 
 def main() -> int:
-    db = sqlite3.connect(settings.db_path)
+    db = sqlite3.connect(_db_path())
     db.row_factory = sqlite3.Row
 
     def q(sql: str, title: str) -> None:

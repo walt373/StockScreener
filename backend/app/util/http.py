@@ -2,17 +2,31 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 import httpx
-from aiolimiter import AsyncLimiter
 
 from ..config import settings
 
 log = logging.getLogger(__name__)
 
 
+# Target: stay safely under SEC's 10 req/sec cap. 9/sec spacing = ~111ms min between
+# request starts. Plus a 10-way concurrency cap so a handful of slow responses can't
+# exhaust httpx's connection pool.
+_MIN_INTERVAL = 1.0 / 9.0
+_CONCURRENCY = 10
+
+
 class EdgarClient:
-    """Shared EDGAR HTTP client: UA header, global 10 req/sec limit, retries."""
+    """Async client for data.sec.gov / www.sec.gov / efts.sec.gov.
+
+    Uses a plain asyncio.Semaphore + time-spacing lock instead of aiolimiter —
+    aiolimiter has shown stalls on Python 3.14 + Windows proactor under load,
+    and we really only need two primitives:
+      - max N concurrent in-flight requests (semaphore)
+      - min gap between request starts (spacing lock)
+    """
 
     def __init__(self) -> None:
         self._client = httpx.AsyncClient(
@@ -23,8 +37,20 @@ class EdgarClient:
             timeout=httpx.Timeout(15.0, connect=5.0),
             follow_redirects=True,
             http2=False,
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
         )
-        self._limiter = AsyncLimiter(max_rate=settings.edgar_rate_per_sec, time_period=1.0)
+        self._sem = asyncio.Semaphore(_CONCURRENCY)
+        self._pace_lock = asyncio.Lock()
+        self._last_request_at = 0.0
+
+    async def _pace(self) -> None:
+        """Block briefly so no two requests start within _MIN_INTERVAL of each other."""
+        async with self._pace_lock:
+            now = time.monotonic()
+            wait = _MIN_INTERVAL - (now - self._last_request_at)
+            if wait > 0:
+                await asyncio.sleep(wait)
+            self._last_request_at = time.monotonic()
 
     async def get(
         self,
@@ -37,7 +63,8 @@ class EdgarClient:
         last_exc: Exception | None = None
         for attempt in range(max_retries + 1):
             try:
-                async with self._limiter:
+                async with self._sem:
+                    await self._pace()
                     resp = await self._client.get(url, headers={"Accept": accept})
                 if resp.status_code == 429:
                     log.warning("EDGAR 429 at %s — backing off", url)

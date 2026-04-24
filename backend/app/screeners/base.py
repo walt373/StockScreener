@@ -13,6 +13,9 @@ class ColumnSpec:
     type: ColumnType = "string"
     tooltip: str | None = None
     nullable: bool = True
+    # Reverses coloring for "multiple" type: low values turn green instead of red.
+    # Used for columns like price-to-book where a lower number is the good outcome.
+    lower_is_better: bool = False
 
 
 @dataclass

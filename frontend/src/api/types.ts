@@ -6,6 +6,7 @@ export interface ColumnSpec {
   type: ColumnType;
   tooltip?: string | null;
   nullable?: boolean;
+  lower_is_better?: boolean;
 }
 
 export interface ScreenerMeta {

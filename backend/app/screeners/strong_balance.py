@@ -5,11 +5,11 @@ from typing import Any
 from ..util.numbers import safe_div
 from .base import ColumnSpec, ScreenerMeta, register
 
-MIN_MARKET_CAP = 100_000_000.0
+MIN_MARKET_CAP = 50_000_000.0
 MIN_PRICE = 1.0
-MIN_AVG_VOLUME = 100_000.0
+MIN_AVG_VOLUME = 200_000.0
 MIN_CURRENT_RATIO = 3.0
-MAX_PRICE_TO_BOOK = 3.0
+MAX_PRICE_TO_BOOK = 2.5
 # Operating cash flow must be > -cash / 4. i.e. annual cash burn can't exceed
 # 25% of the cash pile — otherwise the company runs out of runway within 4 years.
 OCF_TO_CASH_THRESHOLD = -0.25
@@ -19,8 +19,8 @@ META = ScreenerMeta(
     name="Strong balance sheets",
     description=(
         "NYSE/Nasdaq US-domiciled equities with listed options, "
-        "market cap ≥ $100M, price ≥ $1, avg volume ≥ 100K, "
-        "current ratio > 3, price/book < 3, and operating cash flow "
+        "market cap ≥ $50M, price ≥ $1, avg volume ≥ 200K, "
+        "current ratio > 3, price/book < 2.5, and operating cash flow "
         "burn < 25% of cash. Sorted by price/book ascending "
         "(cheapest relative to book value first)."
     ),
@@ -42,7 +42,7 @@ META = ScreenerMeta(
         ColumnSpec("avg_volume", "Avg volume", "int"),
         ColumnSpec("furthest_option_expiry", "Furthest opt. expiry", "date"),
         ColumnSpec("market_cap", "Market cap", "money"),
-        ColumnSpec("cash", "Cash", "money"),
+        ColumnSpec("cash", "Cash and cash equivalents", "money"),
         ColumnSpec("operating_cash_flow", "Operating CF", "money"),
         ColumnSpec("free_cash_flow", "Free cash flow", "money"),
         ColumnSpec(
@@ -56,6 +56,7 @@ META = ScreenerMeta(
             "P / Book",
             "multiple",
             tooltip="Market cap / equity. <1 means trading below book value.",
+            lower_is_better=True,
         ),
         ColumnSpec("total_liabilities", "Total liabilities", "money"),
         ColumnSpec("equity", "Equity", "money"),

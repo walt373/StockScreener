@@ -10,7 +10,7 @@ def _base_row() -> dict:
         "exchange": "NASDAQ",
         "financial_status": "N",
         "price": 5.0,
-        "market_cap": 500_000_000,
+        "market_cap": 400_000_000,
         "avg_volume": 500_000,
         "has_options": True,
         "has_us_filing": True,
@@ -18,7 +18,7 @@ def _base_row() -> dict:
         "current_liabilities": 100_000_000,  # current ratio 4.0
         "cash": 200_000_000,
         "operating_cash_flow": -10_000_000,  # burn of $10M vs cash of $200M (-5% per year)
-        "equity": 200_000_000,                # P/B = 500M / 200M = 2.5
+        "equity": 200_000_000,                # P/B = 400M / 200M = 2.0 (< 2.5)
         "total_liabilities": 100_000_000,
     }
 
@@ -35,10 +35,17 @@ def test_rejects_price_below_one():
     assert s.hard_filters(row) is False
 
 
-def test_rejects_mcap_below_100m():
+def test_rejects_mcap_below_50m():
     s = StrongBalanceScreener()
     row = _base_row()
-    row["market_cap"] = 50_000_000
+    row["market_cap"] = 40_000_000
+    assert s.hard_filters(row) is False
+
+
+def test_rejects_volume_below_200k():
+    s = StrongBalanceScreener()
+    row = _base_row()
+    row["avg_volume"] = 150_000
     assert s.hard_filters(row) is False
 
 
@@ -59,7 +66,16 @@ def test_rejects_negative_equity():
 def test_rejects_high_price_to_book():
     s = StrongBalanceScreener()
     row = _base_row()
-    row["equity"] = 100_000_000  # P/B = 500M / 100M = 5.0, must be < 3
+    row["equity"] = 100_000_000  # P/B = 400M / 100M = 4.0, must be < 2.5
+    assert s.hard_filters(row) is False
+
+
+def test_rejects_price_to_book_at_threshold():
+    s = StrongBalanceScreener()
+    row = _base_row()
+    # P/B exactly 2.5 fails (strict <).
+    row["market_cap"] = 250_000_000
+    row["equity"] = 100_000_000
     assert s.hard_filters(row) is False
 
 
@@ -89,7 +105,7 @@ def test_rejects_no_options():
 def test_project_computes_price_to_book():
     s = StrongBalanceScreener()
     p = s.project(_base_row())
-    assert p["price_to_book"] == 500_000_000 / 200_000_000
+    assert p["price_to_book"] == 400_000_000 / 200_000_000
     assert p["current_ratio"] == 400_000_000 / 100_000_000
     assert p["operating_cash_flow"] == -10_000_000
 
@@ -144,7 +160,7 @@ def test_cache_filter_passes_healthy_row():
     s = StrongBalanceScreener()
     row = _base_row()
     row["cache_fresh"] = True
-    # shares_out sized for P/B = 2.5 (passes)
-    row["shares_outstanding"] = 100_000_000
+    # shares_out sized for P/B = 2.0 (passes <2.5)
+    row["shares_outstanding"] = 80_000_000  # 5 * 80M = 400M mcap
     row["equity"] = 200_000_000
     assert s.cache_filter(row) is True

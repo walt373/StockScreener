@@ -46,8 +46,11 @@ function renderCell(col: ColumnSpec, value: unknown): JSX.Element {
     }
     case "multiple": {
       const n = value as number;
-      // For current ratio: <1 = red (illiquid), >=1 = neutral
-      const cls = n < 1 ? "cell-neg" : "";
+      // Coloring threshold at 1.0. For current-ratio-style columns (default),
+      // <1 is illiquid and shown red. For price-to-book-style (lower_is_better),
+      // <1 means trading below book value and is shown green.
+      let cls = "";
+      if (n < 1) cls = col.lower_is_better ? "cell-pos" : "cell-neg";
       return <span className={cls}>{formatMultiple(n)}</span>;
     }
     case "date":

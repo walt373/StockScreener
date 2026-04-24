@@ -517,9 +517,13 @@ async def stage_filer_check(
             r.sector = lf.sic_description
             r.nt_10k_filed_at = lf.latest_nt_10k_filed.isoformat() if lf.latest_nt_10k_filed else None
             r.nt_10q_filed_at = lf.latest_nt_10q_filed.isoformat() if lf.latest_nt_10q_filed else None
+            # Re-check after the await — a sibling task with the same CIK (class-A/B
+            # shares, preferreds) may have inserted the row while we were fetching.
+            c = cached.get(r.cik)
             if c is None:
                 c = EdgarCompanyCache(cik=r.cik, ticker=r.ticker)
                 db.add(c)
+                cached[r.cik] = c
             c.ticker = r.ticker
             c.sic = lf.sic
             c.sic_description = lf.sic_description
@@ -761,9 +765,13 @@ async def stage_filings(
                         except Exception as e:  # noqa: BLE001
                             _log_err(db, run_id, r.ticker, "filings_fetch", e)
                     filed_dt = filed if isinstance(filed, datetime) else None
+                    # Re-check after the awaits — sibling ticker with same accession
+                    # may have inserted while we were fetching.
+                    cached_flag = flags_by_accession.get(acc)
                     if cached_flag is None:
                         cached_flag = FilingsFlags(accession=acc, cik=r.cik)
                         db.add(cached_flag)
+                        flags_by_accession[acc] = cached_flag
                     cached_flag.form_type = form
                     cached_flag.filed_at = filed_dt
                     cached_flag.going_concern_flag = gc_flag
@@ -793,9 +801,12 @@ async def stage_filings(
                     _log_err(db, run_id, r.ticker, "xbrl", e)
                     facts = None
                 d_iso, src = edgar.extract_nearest_debt_maturity(facts)
+                # Re-check after the await — sibling ticker with same CIK may have inserted.
+                m = maturities_by_cik.get(r.cik)
                 if m is None:
                     m = DebtMaturity(cik=r.cik)
                     db.add(m)
+                    maturities_by_cik[r.cik] = m
                 m.nearest_maturity_date = d_iso
                 m.source_fact = src
                 m.fetched_at = utcnow()

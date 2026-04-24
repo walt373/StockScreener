@@ -53,10 +53,17 @@ async def run_refresh(
             db.commit()
         except Exception as e:  # noqa: BLE001
             log.exception("refresh failed")
-            run.status = "error"
-            run.error_summary = f"{type(e).__name__}: {e}"[:2000]
-            run.finished_at = utcnow()
-            db.commit()
+            # Clear any pending-rollback state so we can write the error row.
+            try:
+                db.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+            run = db.get(RefreshRun, run_id)  # re-attach after rollback
+            if run is not None:
+                run.status = "error"
+                run.error_summary = f"{type(e).__name__}: {e}"[:2000]
+                run.finished_at = utcnow()
+                db.commit()
             raise
         return run.id
     finally:

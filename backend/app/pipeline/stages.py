@@ -548,8 +548,16 @@ async def stage_filer_check(
         finally:
             prog.tick()
 
-    await asyncio.gather(*(work(r) for r in rows))
-    db.commit()
+    # Chunked parallelism: firing all 3000+ tasks at once through asyncio.gather
+    # stresses httpx's connection pool and tends to stall on Python 3.14 + the
+    # Windows proactor loop. Batching preserves the rate-limiter throughput but
+    # bounds in-flight state to CHUNK tasks at a time. Commit after each chunk so
+    # the progress bar actually moves and partial results survive crashes.
+    CHUNK = 100
+    for i in range(0, len(rows), CHUNK):
+        batch = rows[i : i + CHUNK]
+        await asyncio.gather(*(work(r) for r in batch), return_exceptions=True)
+        db.commit()
     keep = [r for r in rows if r.has_us_filing]
     log.info("Filer check: %d → %d", len(rows), len(keep))
     return keep
@@ -837,8 +845,13 @@ async def stage_filings(
         finally:
             prog.tick()
 
-    await asyncio.gather(*(work(r) for r in rows))
-    db.commit()
+    # Same chunked-parallelism pattern as stage_filer_check — prevents httpx
+    # pool exhaustion and keeps progress flowing.
+    CHUNK = 100
+    for i in range(0, len(rows), CHUNK):
+        batch = rows[i : i + CHUNK]
+        await asyncio.gather(*(work(r) for r in batch), return_exceptions=True)
+        db.commit()
     log.info("Filings analysis: done for %d rows", len(rows))
 
 

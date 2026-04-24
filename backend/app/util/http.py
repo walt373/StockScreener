@@ -20,7 +20,7 @@ class EdgarClient:
                 "User-Agent": settings.sec_user_agent,
                 "Accept-Encoding": "gzip, deflate",
             },
-            timeout=httpx.Timeout(30.0, connect=10.0),
+            timeout=httpx.Timeout(15.0, connect=5.0),
             follow_redirects=True,
             http2=False,
         )

@@ -138,6 +138,21 @@ table.results tbody td {
   font-size: 12.5px;
 }
 
+/* Truncate long Name and Sector cells with an ellipsis. Hovering the cell shows
+   the full value via the title attribute. */
+table.results th[data-key="name"],
+table.results td[data-key="name"] {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+table.results th[data-key="sector"],
+table.results td[data-key="sector"] {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 table.results tbody tr:hover td { background: var(--bg-3); }
 
 /* Ticker (first column) stays visible when scrolling horizontally */

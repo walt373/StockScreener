@@ -41,7 +41,6 @@ META = ScreenerMeta(
         ColumnSpec("exchange", "Exchange", "string"),
         ColumnSpec("price", "Price", "money"),
         ColumnSpec("avg_volume", "Avg volume", "int"),
-        ColumnSpec("furthest_option_expiry", "Furthest opt. expiry", "date"),
         ColumnSpec("market_cap", "Market cap", "money"),
         ColumnSpec("cash", "Cash equiv", "money"),
         ColumnSpec("operating_cash_flow", "Operating CF", "money"),
@@ -70,6 +69,7 @@ META = ScreenerMeta(
         ColumnSpec("revenue_growth", "Revenue growth", "pct"),
         ColumnSpec("trailing_1y_return", "1y return", "pct"),
         ColumnSpec("realized_vol_1y", "Realized vol (1y)", "pct"),
+        ColumnSpec("furthest_option_expiry", "Furthest opt. expiry", "date"),
     ],
 )
 

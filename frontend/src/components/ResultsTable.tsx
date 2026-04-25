@@ -319,6 +319,7 @@ export function ResultsTable({ columns, rows, defaultSort }: Props) {
                 return (
                   <th
                     key={c.key}
+                    data-key={c.key}
                     className={isSorted ? "sorted" : undefined}
                     title={c.tooltip ?? undefined}
                     onClick={() => toggleSort(c.key)}
@@ -331,7 +332,7 @@ export function ResultsTable({ columns, rows, defaultSort }: Props) {
             </tr>
             <tr className="filter-row">
               {columns.map((c) => (
-                <th key={c.key}>
+                <th key={c.key} data-key={c.key}>
                   <FilterInput
                     col={c}
                     value={filters[c.key]}
@@ -345,9 +346,17 @@ export function ResultsTable({ columns, rows, defaultSort }: Props) {
           <tbody>
             {sorted.map((r) => (
               <tr key={r.ticker}>
-                {columns.map((c) => (
-                  <td key={c.key}>{renderCell(c, (r as Record<string, unknown>)[c.key])}</td>
-                ))}
+                {columns.map((c) => {
+                  const v = (r as Record<string, unknown>)[c.key];
+                  // For truncated string columns, add title so the full value shows on hover.
+                  const title =
+                    c.type === "string" && typeof v === "string" && v ? v : undefined;
+                  return (
+                    <td key={c.key} data-key={c.key} title={title}>
+                      {renderCell(c, v)}
+                    </td>
+                  );
+                })}
               </tr>
             ))}
           </tbody>

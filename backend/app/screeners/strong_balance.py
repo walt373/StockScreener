@@ -43,7 +43,7 @@ META = ScreenerMeta(
         ColumnSpec("avg_volume", "Avg volume", "int"),
         ColumnSpec("furthest_option_expiry", "Furthest opt. expiry", "date"),
         ColumnSpec("market_cap", "Market cap", "money"),
-        ColumnSpec("cash", "Cash and cash equivalents", "money"),
+        ColumnSpec("cash", "Cash equiv", "money"),
         ColumnSpec("operating_cash_flow", "Operating CF", "money"),
         ColumnSpec("free_cash_flow", "Free cash flow", "money"),
         ColumnSpec(
